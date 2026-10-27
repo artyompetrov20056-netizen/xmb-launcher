@@ -40,6 +40,7 @@ object Glyphs {
 
     fun draw(c: Canvas, g: Glyph, cx: Float, cy: Float, size: Float, alpha: Int) {
         val a = alpha.coerceIn(0, 255)
+        if (boneMode && !caching) { drawCachedChrome(c, g, cx, cy, size, a); return }
         curAlpha = a
         stroke.color = tint
         stroke.alpha = a
@@ -341,66 +342,51 @@ object Glyphs {
         if (p === fill) blob(c, tmp) else boneify(c, tmp)
     }
 
-    /** Разбивает контур на кости длиной ~0.17. */
+    /** Толщина хромовой трубки в долях значка. */
+    private fun tubeT() = 0.16f * weight
+
+    /** Контур → рёберная хромовая трубка с шипами. */
     private fun boneify(c: Canvas, path: Path) {
-        pm.setPath(path, false)
-        do {
-            val len = pm.length
-            if (len <= 0.0001f) continue
-            val n = max(1, kotlin.math.round(len / 0.17f).toInt())
-            for (i in 0 until n) {
-                pm.getPosTan(len * i / n, p0, null)
-                pm.getPosTan(len * (i + 1) / n, p1, null)
-                bone(c, p0[0], p0[1], p1[0], p1[1])
-            }
-        } while (pm.nextContour())
+        ChromeArt.tube(c, path, tubeT(), 1)
     }
 
-    /** Одна хромированная кость: стержень и по два мыщелка на концах. */
     private fun bone(c: Canvas, x0: Float, y0: Float, x1: Float, y1: Float) {
-        val dx = x1 - x0
-        val dy = y1 - y0
-        val len = kotlin.math.hypot(dx, dy)
-        if (len < 0.0005f) return
-        val t = 0.105f * weight
-        c.save()
-        c.translate(x0, y0)
-        c.rotate(Math.toDegrees(kotlin.math.atan2(dy, dx).toDouble()).toFloat())
-        // тень
-        shade.alpha = (curAlpha * 0.5f).toInt()
-        c.drawRect(0f, -t * 0.22f + t * 0.14f, len, t * 0.30f + t * 0.14f, shade)
-        // стержень
-        c.save()
-        c.scale(1f, t)
-        chromeLin.alpha = curAlpha
-        c.drawRect(t * 0.15f, -0.30f, len - t * 0.15f, 0.30f, chromeLin)
-        c.restore()
-        // мыщелки
-        knob.alpha = curAlpha
-        for (ex in 0..1) {
-            val x = if (ex == 0) 0f else len
-            for (sy in 0..1) {
-                c.save()
-                c.translate(x, (if (sy == 0) -1f else 1f) * t * 0.26f)
-                c.scale(t * 0.34f, t * 0.34f)
-                c.drawCircle(0f, 0f, 1f, knob)
-                c.restore()
-            }
-        }
-        c.restore()
+        tmp.rewind()
+        tmp.moveTo(x0, y0)
+        tmp.lineTo(x1, y1)
+        ChromeArt.tube(c, tmp, tubeT(), 1)
     }
 
-    /** Заливка как хромовая шишка. */
+    /** Заливка → сплошной хромовый узел. */
     private fun blob(c: Canvas, path: Path) {
         path.computeBounds(boneRect, true)
-        boneMatrix.setScale(max(boneRect.width(), 0.01f) / 2f, max(boneRect.height(), 0.01f) / 2f)
-        boneMatrix.postTranslate(boneRect.centerX(), boneRect.centerY())
-        blobShader.setLocalMatrix(boneMatrix)
-        blobPaint.alpha = curAlpha
-        c.drawPath(path, blobPaint)
-        edge.strokeWidth = 0.02f
-        edge.alpha = (curAlpha * 0.6f).toInt()
-        c.drawPath(path, edge)
+        ChromeArt.solid(c, path, boneRect.centerX(), boneRect.centerY(),
+            max(boneRect.width(), 0.02f) / 2f, max(boneRect.height(), 0.02f) / 2f)
+    }
+
+    // ---------------- кэш хромовых значков (рисуются один раз) ----------------
+
+    private var caching = false
+    private val chromeCache = object : LinkedHashMap<Long, android.graphics.Bitmap>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, android.graphics.Bitmap>?) = size > 90
+    }
+    private val cachePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+
+    private fun drawCachedChrome(c: Canvas, g: Glyph, cx: Float, cy: Float, size: Float, alpha: Int) {
+        val q = max(8, (kotlin.math.round(size / 6f) * 6).toInt())
+        val px = (q * 1.7f).toInt()
+        val key = g.ordinal.toLong() * 100000L + q
+        val bmp = chromeCache[key] ?: run {
+            val b = android.graphics.Bitmap.createBitmap(px, px, android.graphics.Bitmap.Config.ARGB_8888)
+            caching = true
+            try { draw(Canvas(b), g, px / 2f, px / 2f, q.toFloat(), 255) } finally { caching = false }
+            chromeCache[key] = b
+            b
+        }
+        val s = size / q
+        cachePaint.alpha = alpha
+        boneRect.set(cx - px * s / 2f, cy - px * s / 2f, cx + px * s / 2f, cy + px * s / 2f)
+        c.drawBitmap(bmp, null, boneRect, cachePaint)
     }
 }
 

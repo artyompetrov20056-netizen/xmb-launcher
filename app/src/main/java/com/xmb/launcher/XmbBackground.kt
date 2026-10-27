@@ -598,20 +598,52 @@ class XmbBackground {
 
         drawSpine(c, w, h, unit, time)
 
-        // рамка экрана из хромовых бусин, по ним бежит блеск
-        val m = unit * 0.028f
-        val br = unit * 0.011f
-        val step = unit * 0.036f
+        // монолитная рёберная хромовая рамка (рисуется один раз), по ней бежит блик
+        val fb = chromeFrame(width(w), height(h), unit)
+        if (fb != null) c.drawBitmap(fb, 0f, 0f, null)
+        val m = unit * 0.04f
         val perim = 2f * (w + h - 4f * m)
-        var d = 0f
-        val glint = (time * 0.18f % 1f) * perim
-        while (d < perim) {
-            val pxy = perimeterPoint(d, w, h, m)
-            val dist = abs(d - glint).let { min(it, perim - it) }
-            beadPaint.alpha = (150 + 105 * exp(-dist * dist / (unit * unit * 0.02f))).toInt().coerceAtMost(255)
-            c.save(); c.translate(pxy[0], pxy[1]); c.scale(br, br); c.drawCircle(0f, 0f, 1f, beadPaint); c.restore()
-            d += step
+        val glint = (time * 0.12f % 1f) * perim
+        val pxy = perimeterPoint(glint, w, h, m)
+        warmGlowWhite.alpha = 200
+        c.save(); c.translate(pxy[0], pxy[1]); c.scale(unit * 0.09f, unit * 0.09f); c.drawCircle(0f, 0f, 1f, warmGlowWhite); c.restore()
+    }
+
+    private val warmGlowWhite = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = RadialGradient(0f, 0f, 1f,
+            intArrayOf(Color.argb(220, 255, 255, 255), Color.argb(60, 220, 220, 255), Color.TRANSPARENT),
+            floatArrayOf(0f, 0.3f, 1f), Shader.TileMode.CLAMP)
+    }
+    private var frameBmp: android.graphics.Bitmap? = null
+    private var frameKey = 0L
+
+    private fun width(w: Float) = w.toInt()
+
+    /** Рамка: сплошная рёберная хромовая полоса с шипами внутрь и узлами-шарами в углах. */
+    private fun chromeFrame(w: Int, h: Int, unit: Float): android.graphics.Bitmap? {
+        if (w <= 0 || h <= 0) return null
+        val key = w.toLong() * 100000L + h
+        frameBmp?.let { if (frameKey == key) return it }
+        val bmp = try { android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888) } catch (_: Throwable) { return null }
+        val c = Canvas(bmp)
+        val t = unit * 0.052f
+        val m = unit * 0.04f
+        val p = Path()
+        p.addRoundRect(m, m, w - m, h - m, unit * 0.06f, unit * 0.06f, Path.Direction.CW)
+        ChromeArt.tube(c, p, t, 3)
+        // узлы по серединам сторон и в углах
+        val r = t * 0.95f
+        for ((x, y) in listOf(m to m, w - m to m, m to h - m, w - m to h - m)) {
+            ChromeArt.boss(c, x, y, r * 1.35f, 7, 255, 20f)
+            ChromeArt.jewel(c, x + r * 0.2f, y + r * 0.25f, r * 0.38f)
         }
+        for ((x, y) in listOf(w / 2f to m, w / 2f to h - m, m to h / 2f, w - m to h / 2f)) {
+            ChromeArt.boss(c, x, y, r, 6)
+        }
+        frameBmp?.recycle()
+        frameBmp = bmp
+        frameKey = key
+        return bmp
     }
 
     private val boneShader = LinearGradient(0f, -0.5f, 0f, 0.5f,
@@ -619,51 +651,35 @@ class XmbBackground {
         floatArrayOf(0f, 0.2f, 0.45f, 0.56f, 0.8f, 1f), Shader.TileMode.CLAMP)
     private val bonePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = boneShader }
 
-    /** Хромированный позвоночник с рёбрами, медленно извивается через весь экран. */
+    private val spinePath = Path()
+    private val ribPath = Path()
+
+    /** Массивный рёберный хромовый позвоночник с рёбрами, медленно извивается через экран. */
     private fun drawSpine(c: Canvas, w: Float, h: Float, unit: Float, time: Float) {
-        val n = 30
-        val vw = unit * 0.075f
-        val vh = unit * 0.042f
+        val n = 40
+        spinePath.rewind()
+        val xs = FloatArray(n)
+        val ys = FloatArray(n)
         for (i in 0 until n) {
             val t = i / (n - 1f)
-            val y = h * (1.06f - t * 1.12f)
-            val ph = t * 2.2f * PI.toFloat() + time * 0.35f
-            val x = w * 0.30f + w * 0.16f * sin(ph)
-            // наклон по касательной
-            val dxdy = w * 0.16f * cos(ph) * (2.2f * PI.toFloat()) / (h * 1.12f)
-            val ang = Math.toDegrees(kotlin.math.atan(dxdy.toDouble())).toFloat()
-            c.save()
-            c.translate(x, y)
-            c.rotate(-ang)
-            bonePaint.alpha = 120
-            // рёбра
-            for (side in intArrayOf(-1, 1)) {
-                path.rewind()
-                path.moveTo(side * vw * 0.45f, -vh * 0.1f)
-                path.quadTo(side * vw * 1.6f, -vh * 1.6f, side * vw * 2.4f, vh * (0.4f + 0.3f * sin(time + i)))
-                stroke.color = Color.rgb(200, 204, 230)
-                stroke.strokeWidth = vh * 0.32f
-                stroke.alpha = 70
-                c.drawPath(path, stroke)
-            }
-            // позвонок
-            c.save()
-            c.scale(vw, vh)
-            c.drawRoundRect(-0.5f, -0.5f, 0.5f, 0.5f, 0.3f, 0.45f, bonePaint)
-            c.restore()
-            // шип назад
-            path.rewind()
-            path.moveTo(-vw * 0.12f, -vh * 0.4f)
-            path.lineTo(0f, -vh * 1.5f)
-            path.lineTo(vw * 0.12f, -vh * 0.4f)
-            path.close()
-            fill.color = Color.rgb(220, 222, 240)
-            fill.alpha = 110
-            c.drawPath(path, fill)
-            c.restore()
+            ys[i] = h * (1.08f - t * 1.16f)
+            xs[i] = w * 0.30f + w * 0.15f * sin(t * 2.2f * PI.toFloat() + time * 0.3f)
+            if (i == 0) spinePath.moveTo(xs[i], ys[i]) else spinePath.lineTo(xs[i], ys[i])
         }
-        stroke.color = Color.WHITE
-        fill.color = Color.WHITE
+        // рёбра — изогнутые рёберные трубки по обе стороны
+        for (i in 4 until n - 3 step 4) {
+            for (side in intArrayOf(-1, 1)) {
+                ribPath.rewind()
+                ribPath.moveTo(xs[i], ys[i])
+                val sw = sin(time * 0.8f + i) * unit * 0.02f
+                ribPath.quadTo(
+                    xs[i] + side * unit * 0.20f, ys[i] - unit * 0.14f,
+                    xs[i] + side * unit * 0.30f, ys[i] + unit * 0.05f + sw
+                )
+                ChromeArt.tube(c, ribPath, unit * 0.022f, if (side < 0) 2 else 3, 170)
+            }
+        }
+        ChromeArt.tube(c, spinePath, unit * 0.06f, 1, 200)
     }
 
     private val ppt = FloatArray(2)
