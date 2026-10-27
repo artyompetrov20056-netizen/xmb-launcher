@@ -728,3 +728,380 @@ class RouletteOverlay(
         return true
     }
 }
+
+// =========================================================================
+// Колёса выбора (время будильника, таймер)
+// =========================================================================
+
+/**
+ * Несколько вертикальных колёс рядом (часы · минуты · секунды), как в настройках времени PS3.
+ * Свайп по колонке — крутить, нажатие на колонку — выбрать её, «Готово» — применить.
+ */
+class PickerOverlay(
+    private val title: String,
+    private val columns: List<List<String>>,
+    start: IntArray,
+    private val captions: List<String> = emptyList(),
+    private val onDone: (IntArray) -> Unit,
+) : Overlay() {
+
+    private val n = columns.size
+    private val pos = FloatArray(n) { start[it].toFloat() }
+    private val target = IntArray(n) { start[it] }
+    private val lastIdx = IntArray(n) { start[it] }
+    private var focus = 0
+    private var lastTime = -1f
+
+    private val panel = RectF()
+    private val band = RectF()
+    private val okRect = RectF()
+    private val cancelRect = RectF()
+    private val colRects = Array(n) { RectF() }
+    private var spacing = 1f
+    private var cy = 0f
+
+    private var dragCol = -1
+    private var downX = 0f
+    private var downY = 0f
+    private var dragStart = 0f
+    private var dragging = false
+    private var pressedBtn = 0
+    private var velocity: android.view.VelocityTracker? = null
+
+    private val dim = Paint().apply { color = Color.BLACK }
+    private val panelFill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.WHITE }
+    private val fillW = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val titleP = textPaint()
+    private val valP = textPaint().apply { textAlign = Paint.Align.CENTER }
+    private val capP = textPaint().apply { textAlign = Paint.Align.CENTER }
+    private val btnP = textPaint().apply { textAlign = Paint.Align.CENTER }
+
+    private fun wrapIdx(c: Int, k: Int): Int { val m = columns[c].size; return ((k % m) + m) % m }
+
+    private fun layout(f: Frame) {
+        val u = f.unit
+        spacing = u * 0.09f
+        val pw = min(f.w - f.l - f.r - u * 0.08f, u * 0.95f)
+        val pad = u * 0.05f
+        val headH = u * 0.09f
+        val wheelH = spacing * 5f
+        val capH = if (captions.isEmpty()) 0f else u * 0.05f
+        val btnH = u * 0.11f
+        val ph = pad + headH + capH + wheelH + pad * 0.6f + btnH + pad
+        val cx = (f.l + f.w - f.r) / 2f
+        val ccy = (f.t + f.h - f.b) / 2f
+        panel.set(cx - pw / 2f, ccy - ph / 2f, cx + pw / 2f, ccy + ph / 2f)
+        val wheelTop = panel.top + pad + headH + capH
+        cy = wheelTop + wheelH / 2f
+        band.set(panel.left + pad * 0.6f, cy - spacing * 0.5f, panel.right - pad * 0.6f, cy + spacing * 0.5f)
+        val colW = (pw - pad * 1.2f) / n
+        for (i in 0 until n) {
+            val l = panel.left + pad * 0.6f + i * colW
+            colRects[i].set(l, wheelTop, l + colW, wheelTop + wheelH)
+        }
+        val by = wheelTop + wheelH + pad * 0.6f
+        val bw = (pw - pad * 3f) / 2f
+        cancelRect.set(panel.left + pad, by, panel.left + pad + bw, by + btnH)
+        okRect.set(panel.right - pad - bw, by, panel.right - pad, by + btnH)
+        titleP.textSize = u * 0.046f
+        valP.textSize = u * 0.05f
+        capP.textSize = u * 0.03f
+        btnP.textSize = u * 0.04f
+    }
+
+    override fun draw(c: Canvas, f: Frame, time: Float) {
+        val dt = if (lastTime < 0f) 0f else (time - lastTime).coerceIn(0f, 0.05f)
+        lastTime = time
+        for (i in 0 until n) if (!(dragging && dragCol == i)) pos[i] += (target[i] - pos[i]) * (1f - kotlin.math.exp(-dt * 16f))
+        checkChange()
+        layout(f)
+        val u = f.unit
+        val rad = u * 0.02f
+
+        dim.alpha = a(150f)
+        c.drawRect(0f, 0f, f.w, f.h, dim)
+        panelFill.color = Color.rgb(12, 18, 34)
+        panelFill.alpha = a(228f)
+        c.drawRoundRect(panel, rad, rad, panelFill)
+        line.strokeWidth = max(1f, u * 0.0018f)
+        line.alpha = a(70f)
+        c.drawRoundRect(panel, rad, rad, line)
+
+        titleP.alpha = a(255f)
+        drawText(c, title, titleP, panel.left + u * 0.05f, panel.top + u * 0.05f + titleP.textSize, panel.width() - u * 0.1f)
+
+        // полоса выбранного значения
+        fillW.alpha = a(22f)
+        c.drawRoundRect(band, rad * 0.6f, rad * 0.6f, fillW)
+        line.alpha = a(200f)
+        line.strokeWidth = max(2f, u * 0.0035f)
+        c.drawRoundRect(band, rad * 0.6f, rad * 0.6f, line)
+
+        for (i in 0 until n) {
+            val cr = colRects[i]
+            if (captions.size > i) {
+                capP.alpha = a(if (i == focus) 230f else 150f)
+                c.drawText(captions[i], cr.centerX(), cr.top - u * 0.015f, capP)
+            }
+            if (i == focus) {
+                fillW.alpha = a(14f)
+                c.drawRoundRect(cr, rad * 0.6f, rad * 0.6f, fillW)
+            }
+            c.save()
+            c.clipRect(cr)
+            val base = floor(pos[i]).toInt()
+            for (k in base - 3..base + 3) {
+                val off = k - pos[i]
+                if (abs(off) > 2.6f) continue
+                val y = cy + off * spacing
+                val near = 1f - min(abs(off), 1f)
+                valP.textSize = u * (0.038f + 0.016f * near)
+                valP.alpha = a(255f * (1f - min(abs(off), 2.3f) * 0.38f))
+                c.drawText(columns[i][wrapIdx(i, k)], cr.centerX(), y + valP.textSize * 0.36f, valP)
+            }
+            c.restore()
+        }
+
+        drawButton(c, cancelRect, "Отмена", pressedBtn == 1, u)
+        drawButton(c, okRect, "Готово", pressedBtn == 2, u)
+    }
+
+    private fun drawButton(c: Canvas, r: RectF, label: String, down: Boolean, u: Float) {
+        fillW.alpha = a(if (down) 80f else 26f)
+        c.drawRoundRect(r, u * 0.016f, u * 0.016f, fillW)
+        line.strokeWidth = max(1f, u * 0.0018f)
+        line.alpha = a(120f)
+        c.drawRoundRect(r, u * 0.016f, u * 0.016f, line)
+        btnP.alpha = a(255f)
+        c.drawText(label, r.centerX(), r.centerY() + btnP.textSize * 0.36f, btnP)
+    }
+
+    private fun checkChange() {
+        for (i in 0 until n) {
+            val idx = wrapIdx(i, kotlin.math.round(pos[i]).toInt())
+            if (idx != lastIdx[i]) { lastIdx[i] = idx; host.playTick() }
+        }
+    }
+
+    override fun onTouch(e: MotionEvent, f: Frame) {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                downX = e.x; downY = e.y
+                dragging = false
+                dragCol = colRects.indexOfFirst { it.contains(e.x, e.y) }
+                if (dragCol >= 0) { focus = dragCol; dragStart = pos[dragCol] }
+                pressedBtn = when {
+                    okRect.contains(e.x, e.y) -> 2
+                    cancelRect.contains(e.x, e.y) -> 1
+                    else -> 0
+                }
+                velocity?.recycle()
+                velocity = android.view.VelocityTracker.obtain().also { it.addMovement(e) }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                velocity?.addMovement(e)
+                if (dragCol >= 0) {
+                    if (!dragging && abs(e.y - downY) > f.unit * 0.02f) { dragging = true; dragStart = pos[dragCol] }
+                    if (dragging) {
+                        pos[dragCol] = dragStart - (e.y - downY) / spacing
+                        checkChange()
+                    }
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                if (dragging && dragCol >= 0) {
+                    val vt = velocity
+                    vt?.addMovement(e)
+                    vt?.computeCurrentVelocity(1000)
+                    val v = vt?.yVelocity ?: 0f
+                    target[dragCol] = kotlin.math.round(pos[dragCol] - v * 0.12f / spacing).toInt()
+                } else if (dragCol >= 0) {
+                    // нажатие выше/ниже полосы — шаг на одно значение
+                    val off = kotlin.math.round((e.y - cy) / spacing).toInt()
+                    target[dragCol] = kotlin.math.round(pos[dragCol]).toInt() + off
+                } else if (pressedBtn == 2 && okRect.contains(e.x, e.y)) {
+                    confirm()
+                } else if (pressedBtn == 1 && cancelRect.contains(e.x, e.y)) {
+                    onBack()
+                } else if (!panel.contains(e.x, e.y) && !panel.contains(downX, downY)) {
+                    onBack()
+                }
+                dragging = false
+                dragCol = -1
+                pressedBtn = 0
+                velocity?.recycle(); velocity = null
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                dragging = false
+                dragCol = -1
+                pressedBtn = 0
+            }
+        }
+    }
+
+    private fun confirm() {
+        val res = IntArray(n) { wrapIdx(it, target[it]) }
+        host.playOk()
+        host.closeOverlay()
+        onDone(res)
+    }
+
+    override fun onKey(keyCode: Int, event: KeyEvent): Boolean {
+        when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> if (focus > 0) { focus--; host.playTick() }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> if (focus < n - 1) { focus++; host.playTick() }
+            KeyEvent.KEYCODE_DPAD_UP -> target[focus]--
+            KeyEvent.KEYCODE_DPAD_DOWN -> target[focus]++
+            KeyEvent.KEYCODE_BUTTON_L1 -> target[focus] -= 10
+            KeyEvent.KEYCODE_BUTTON_R1 -> target[focus] += 10
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_BUTTON_A -> confirm()
+            KeyEvent.KEYCODE_BUTTON_B -> onBack()
+            else -> return false
+        }
+        return true
+    }
+
+    override fun padHints(): List<Pair<PadBtn, String>> = listOf(
+        PadBtn.DPAD to "Изменить",
+        PadBtn.SHOULDERS to "±10",
+        PadBtn.SOUTH to "Готово",
+        PadBtn.EAST to "Отмена",
+    )
+}
+
+// =========================================================================
+// Список с галочками (дни недели)
+// =========================================================================
+
+class ChecklistOverlay(
+    private val title: String,
+    private val options: List<String>,
+    initial: BooleanArray,
+    private val onDone: (BooleanArray) -> Unit,
+) : Overlay() {
+
+    private val checked = initial.copyOf()
+    private var selected = 0
+    private var pressed = -1
+    private var downOutside = false
+    private val panel = RectF()
+    private val rows = Array(options.size + 1) { RectF() }
+    private val box = RectF()
+
+    private val dim = Paint().apply { color = Color.BLACK }
+    private val panelFill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; color = Color.WHITE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+    }
+    private val fillW = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val titleP = textPaint()
+    private val optP = textPaint()
+    private val doneP = textPaint().apply { textAlign = Paint.Align.CENTER }
+
+    private fun layout(f: Frame) {
+        val u = f.unit
+        val pw = min(f.w - f.l - f.r - u * 0.1f, u * 0.95f)
+        val pad = u * 0.05f
+        val headH = u * 0.09f
+        val maxH = f.h - f.t - f.b - u * 0.08f
+        val rowH = min(u * 0.095f, (maxH - headH - pad * 2) / (options.size + 1))
+        val ph = pad * 2 + headH + rowH * (options.size + 1)
+        val cx = (f.l + f.w - f.r) / 2f
+        val cy = (f.t + f.h - f.b) / 2f
+        panel.set(cx - pw / 2f, cy - ph / 2f, cx + pw / 2f, cy + ph / 2f)
+        var y = panel.top + pad + headH
+        for (i in rows.indices) {
+            rows[i].set(panel.left + pad * 0.5f, y, panel.right - pad * 0.5f, y + rowH)
+            y += rowH
+        }
+        titleP.textSize = u * 0.046f
+        optP.textSize = min(u * 0.042f, rowH * 0.45f)
+        doneP.textSize = optP.textSize
+    }
+
+    override fun draw(c: Canvas, f: Frame, time: Float) {
+        layout(f)
+        val u = f.unit
+        val rad = u * 0.02f
+        dim.alpha = a(150f)
+        c.drawRect(0f, 0f, f.w, f.h, dim)
+        panelFill.color = Color.rgb(12, 18, 34)
+        panelFill.alpha = a(228f)
+        c.drawRoundRect(panel, rad, rad, panelFill)
+        line.strokeWidth = max(1f, u * 0.0018f)
+        line.alpha = a(70f)
+        c.drawRoundRect(panel, rad, rad, line)
+        titleP.alpha = a(255f)
+        drawText(c, title, titleP, panel.left + u * 0.05f, panel.top + u * 0.05f + titleP.textSize, panel.width() - u * 0.1f)
+
+        for (i in rows.indices) {
+            val r = rows[i]
+            if (i == pressed || i == selected) {
+                fillW.alpha = a(if (i == pressed) 75f else 38f + 14f * sin(time * 3f))
+                c.drawRoundRect(r, rad * 0.6f, rad * 0.6f, fillW)
+            }
+            if (i == options.size) {
+                doneP.alpha = a(255f)
+                c.drawText("Готово", r.centerX(), r.centerY() + doneP.textSize * 0.36f, doneP)
+                continue
+            }
+            val bs = optP.textSize * 0.9f
+            val bx = r.left + u * 0.03f
+            box.set(bx, r.centerY() - bs / 2f, bx + bs, r.centerY() + bs / 2f)
+            line.strokeWidth = max(1.5f, u * 0.003f)
+            line.alpha = a(200f)
+            c.drawRoundRect(box, bs * 0.18f, bs * 0.18f, line)
+            if (checked[i]) {
+                c.drawLine(box.left + bs * 0.22f, box.centerY(), box.left + bs * 0.42f, box.bottom - bs * 0.24f, line)
+                c.drawLine(box.left + bs * 0.42f, box.bottom - bs * 0.24f, box.right - bs * 0.2f, box.top + bs * 0.24f, line)
+            }
+            optP.alpha = a(if (checked[i]) 255f else 190f)
+            c.drawText(options[i], box.right + u * 0.03f, r.centerY() + optP.textSize * 0.36f, optP)
+        }
+    }
+
+    private fun rowAt(x: Float, y: Float) = rows.indexOfFirst { it.contains(x, y) }
+
+    private fun activate(i: Int) {
+        if (i == options.size) {
+            host.playOk()
+            host.closeOverlay()
+            onDone(checked.copyOf())
+        } else {
+            checked[i] = !checked[i]
+            host.playTick()
+        }
+    }
+
+    override fun onTouch(e: MotionEvent, f: Frame) {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { pressed = rowAt(e.x, e.y); downOutside = !panel.contains(e.x, e.y) }
+            MotionEvent.ACTION_MOVE -> if (pressed >= 0 && rowAt(e.x, e.y) != pressed) pressed = -1
+            MotionEvent.ACTION_UP -> {
+                val r = rowAt(e.x, e.y)
+                if (pressed >= 0 && r == pressed) { selected = r; activate(r) }
+                else if (downOutside && !panel.contains(e.x, e.y)) onBack()
+                pressed = -1
+            }
+            MotionEvent.ACTION_CANCEL -> pressed = -1
+        }
+    }
+
+    override fun onKey(keyCode: Int, event: KeyEvent): Boolean {
+        when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_UP -> if (selected > 0) { selected--; host.playTick() }
+            KeyEvent.KEYCODE_DPAD_DOWN -> if (selected < options.size) { selected++; host.playTick() }
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_BUTTON_A -> activate(selected)
+            KeyEvent.KEYCODE_BUTTON_B -> onBack()
+            else -> return false
+        }
+        return true
+    }
+
+    override fun padHints(): List<Pair<PadBtn, String>> = listOf(
+        PadBtn.DPAD to "Выбор",
+        PadBtn.SOUTH to "Отметить",
+        PadBtn.EAST to "Отмена",
+    )
+}

@@ -65,9 +65,16 @@ class AppMedia(private val ctx: Context) {
         false
     }
 
-    fun saveMusic(uri: Uri, key: String?): Boolean = try {
+    fun saveMusic(uri: Uri, key: String?): Boolean = copyAudio(uri, if (key == null) globalMusicFile else musicFile(key))
+
+    /** Мелодия будильника. Возвращает путь к сохранённому файлу. */
+    fun saveAlarmSound(uri: Uri, tag: String): String? {
+        val f = File(dir, "alarm_$tag.audio")
+        return if (copyAudio(uri, f)) f.path else null
+    }
+
+    private fun copyAudio(uri: Uri, target: File): Boolean = try {
         dir.mkdirs()
-        val target = if (key == null) globalMusicFile else musicFile(key)
         val tmp = File(dir, target.name + ".tmp")
         var total = 0L
         ctx.contentResolver.openInputStream(uri)?.use { input ->

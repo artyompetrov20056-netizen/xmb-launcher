@@ -19,6 +19,7 @@ import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.widget.Toast
+import java.util.Locale
 
 class MainActivity : Activity(), XmbView.Listener {
 
@@ -37,6 +38,20 @@ class MainActivity : Activity(), XmbView.Listener {
     private lateinit var media: AppMedia
     private lateinit var music: XmbMusic
     private var pendingKey: String? = null
+    private var timerItem: XmbItem? = null
+
+    /** Обратный отсчёт таймера в подписи пункта, раз в секунду. */
+    private val timerTick = object : Runnable {
+        override fun run() {
+            timerItem?.subtitle = timerSubtitle()
+            xmb.invalidate()
+            if (AlarmStore.timerEnd(this@MainActivity) > 0) {
+                handler.postDelayed(this, 1000)
+            } else if (timerItem?.subtitle?.startsWith("Осталось") == true) {
+                refreshMenu()
+            }
+        }
+    }
 
     /** Подключение / отключение геймпада. */
     private val inputListener = object : android.hardware.input.InputManager.InputDeviceListener {
@@ -121,6 +136,8 @@ class MainActivity : Activity(), XmbView.Listener {
         super.onResume()
         sounds.start()
         music.resume()
+        handler.removeCallbacks(timerTick)
+        handler.post(timerTick)
         LockController.start(this)
         if (reopenLockSetup) {
             // Вернулись из системных настроек — показываем обновлённый список разрешений
@@ -132,6 +149,7 @@ class MainActivity : Activity(), XmbView.Listener {
     override fun onPause() {
         sounds.stopSoon()
         music.pause()
+        handler.removeCallbacks(timerTick)
         super.onPause()
     }
 
@@ -301,6 +319,7 @@ class MainActivity : Activity(), XmbView.Listener {
 
         return listOf(
             XmbCategory("settings", "Настройки", Glyph.SETTINGS, settings),
+            XmbCategory("alarm", "Будильник", Glyph.ALARM, buildAlarmItems()),
             XmbCategory("photo", "Фото", Glyph.PHOTO, appsOf { Kind.PHOTO in it.kinds }),
             XmbCategory("music", "Музыка", Glyph.MUSIC, appsOf { Kind.MUSIC in it.kinds }),
             XmbCategory("video", "Видео", Glyph.VIDEO, appsOf { Kind.VIDEO in it.kinds }),
@@ -425,6 +444,212 @@ class MainActivity : Activity(), XmbView.Listener {
     // =====================================================================
 
     /** Задержались на приложении — играет его мелодия (если есть), иначе общая. */
+    // =====================================================================
+    // Будильник и таймер
+    // =====================================================================
+
+    private fun two(v: Int) = String.format(Locale.getDefault(), "%02d", v)
+
+    private fun buildAlarmItems(): List<XmbItem> {
+        val items = ArrayList<XmbItem>()
+        items += XmbItem("Новый будильник", "Выбрать время", Glyph.PLUS, onClick = { it.newAlarm() })
+        val timer = XmbItem("Таймер", timerSubtitle(), Glyph.TIMER, onClick = { it.openTimer() })
+        timerItem = timer
+        items += timer
+        for (a in AlarmStore.load(this)) {
+            val state = if (a.enabled) {
+                "Включён · " + AlarmStore.inText(AlarmStore.nextTrigger(a) - System.currentTimeMillis())
+            } else "Выключен"
+            items += XmbItem(
+                "${two(a.hour)}:${two(a.minute)}",
+                "${AlarmStore.daysText(a.days)} · $state",
+                Glyph.ALARM,
+                onClick = { it.openAlarmMenu(a.id) }
+            )
+        }
+        items += XmbItem(
+            "Мелодия по умолчанию",
+            if (AlarmStore.defaultSound(this) != null) "Своя мелодия (MP3)" else "Системная мелодия будильника",
+            Glyph.MUSIC,
+            onClick = { it.openDefaultSoundMenu() }
+        )
+        return items
+    }
+
+    private fun fmtDuration(ms: Long): String {
+        val total = ((ms + 999) / 1000).coerceAtLeast(0)
+        val h = total / 3600
+        val m = (total / 60) % 60
+        val sec = total % 60
+        return if (h > 0) "$h:${two(m.toInt())}:${two(sec.toInt())}" else "${two(m.toInt())}:${two(sec.toInt())}"
+    }
+
+    private fun timerSubtitle(): String {
+        val end = AlarmStore.timerEnd(this)
+        if (end > 0) return "Осталось " + fmtDuration(end - System.currentTimeMillis())
+        val left = AlarmStore.timerPaused(this)
+        if (left > 0) return "На паузе · " + fmtDuration(left)
+        return "Не запущен"
+    }
+
+    /** Уведомления и показ поверх экрана нужны, чтобы будильник мог зазвонить. */
+    private fun ensureAlarmPermissions() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 2)
+            return
+        }
+        val nm = getSystemService(android.app.NotificationManager::class.java)
+        if (Build.VERSION.SDK_INT >= 34 && nm != null && !nm.canUseFullScreenIntent() && !Settings.canDrawOverlays(this)) {
+            handler.postDelayed({
+                xmb.showOverlay(
+                    DialogOverlay(
+                        "Будильник", "Разрешите показывать будильник на весь экран — иначе он придёт только уведомлением.",
+                        listOf("Открыть настройки", "Позже")
+                    ) { pick ->
+                        if (pick == 0) startSafe(
+                            Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:$packageName")),
+                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+                        )
+                    }
+                )
+            }, 400)
+        }
+    }
+
+    private fun toastNext(a: Alarm) {
+        Toast.makeText(
+            this, "Будильник сработает " + AlarmStore.inText(AlarmStore.nextTrigger(a) - System.currentTimeMillis()),
+            Toast.LENGTH_LONG
+        ).show()
+    }
+
+    fun newAlarm() {
+        val hours = (0..23).map { two(it) }
+        val mins = (0..59).map { two(it) }
+        xmb.showOverlay(
+            PickerOverlay("Новый будильник", listOf(hours, mins), intArrayOf(7, 0), listOf("часы", "минуты")) { r ->
+                val a = AlarmStore.add(this, r[0], r[1])
+                toastNext(a)
+                ensureAlarmPermissions()
+                refreshMenu()
+            }
+        )
+    }
+
+    fun openAlarmMenu(id: Int) {
+        val a = AlarmStore.get(this, id) ?: return
+        val options = ArrayList<String>()
+        val actions = ArrayList<() -> Unit>()
+        options += if (a.enabled) "Выключить" else "Включить"
+        actions += {
+            a.enabled = !a.enabled
+            AlarmStore.update(this, a)
+            if (a.enabled) { toastNext(a); ensureAlarmPermissions() }
+            refreshMenu()
+        }
+        options += "Изменить время"
+        actions += {
+            val hours = (0..23).map { two(it) }
+            val mins = (0..59).map { two(it) }
+            xmb.showOverlay(
+                PickerOverlay("Время будильника", listOf(hours, mins), intArrayOf(a.hour, a.minute), listOf("часы", "минуты")) { r ->
+                    a.hour = r[0]; a.minute = r[1]; a.enabled = true
+                    AlarmStore.update(this, a)
+                    toastNext(a)
+                    refreshMenu()
+                }
+            )
+        }
+        options += "Повтор: " + AlarmStore.daysText(a.days)
+        actions += {
+            val init = BooleanArray(7) { (a.days shr it) and 1 == 1 }
+            xmb.showOverlay(ChecklistOverlay("Повторять по дням", AlarmStore.DAY_FULL, init) { res ->
+                var mask = 0
+                for (i in 0..6) if (res[i]) mask = mask or (1 shl i)
+                a.days = mask
+                if (a.enabled) { AlarmStore.update(this, a); toastNext(a) } else AlarmStore.update(this, a)
+                refreshMenu()
+            })
+        }
+        options += if (a.sound != null) "Мелодия: своя — заменить MP3" else "Мелодия: выбрать MP3"
+        actions += { pickFile(REQ_ALARM_SOUND, a.id.toString(), "audio/*") }
+        if (a.sound != null) {
+            options += "Мелодия по умолчанию"
+            actions += {
+                a.sound?.let { java.io.File(it).delete() }
+                a.sound = null
+                AlarmStore.update(this, a)
+                refreshMenu()
+            }
+        }
+        options += "Удалить будильник"
+        actions += {
+            a.sound?.let { java.io.File(it).delete() }
+            AlarmStore.remove(this, a.id)
+            Toast.makeText(this, "Будильник удалён", Toast.LENGTH_SHORT).show()
+            refreshMenu()
+        }
+        xmb.showOverlay(DialogOverlay("Будильник ${two(a.hour)}:${two(a.minute)}", null, options) { actions[it]() })
+    }
+
+    fun openDefaultSoundMenu() {
+        val has = AlarmStore.defaultSound(this) != null
+        val options = ArrayList<String>()
+        options += if (has) "Заменить MP3" else "Выбрать MP3"
+        if (has) options += "Системная мелодия будильника"
+        xmb.showOverlay(
+            DialogOverlay("Мелодия по умолчанию", "Для таймера и будильников без своей мелодии.", options) { pick ->
+                if (pick == 0) pickFile(REQ_DEFAULT_ALARM_SOUND, null, "audio/*")
+                else {
+                    AlarmStore.defaultSound(this)?.let { java.io.File(it).delete() }
+                    AlarmStore.setDefaultSound(this, null)
+                    refreshMenu()
+                }
+            }
+        )
+    }
+
+    fun openTimer() {
+        val end = AlarmStore.timerEnd(this)
+        val paused = AlarmStore.timerPaused(this)
+        if (end == 0L && paused == 0L) { showTimerPicker(); return }
+        val options = listOf(if (end > 0) "Пауза" else "Продолжить", "Сбросить", "Новый таймер")
+        xmb.showOverlay(DialogOverlay("Таймер", timerSubtitle(), options) { pick ->
+            when (pick) {
+                0 -> if (end > 0) AlarmStore.pauseTimer(this) else AlarmStore.resumeTimer(this)
+                1 -> AlarmStore.cancelTimer(this)
+                2 -> { AlarmStore.cancelTimer(this); showTimerPicker() }
+            }
+            timerItem?.subtitle = timerSubtitle()
+            handler.removeCallbacks(timerTick)
+            handler.post(timerTick)
+        })
+    }
+
+    private fun showTimerPicker() {
+        val hours = (0..23).map { it.toString() }
+        val sixty = (0..59).map { two(it) }
+        val lastMin = prefs.getInt("timer_last_min", 5)
+        xmb.showOverlay(
+            PickerOverlay("Таймер", listOf(hours, sixty, sixty), intArrayOf(0, lastMin, 0), listOf("часы", "минуты", "секунды")) { r ->
+                val ms = (r[0] * 3600L + r[1] * 60L + r[2]) * 1000L
+                if (ms <= 0L) {
+                    Toast.makeText(this, "Задайте время больше нуля", Toast.LENGTH_SHORT).show()
+                } else {
+                    prefs.edit().putInt("timer_last_min", r[1]).apply()
+                    AlarmStore.startTimer(this, ms)
+                    ensureAlarmPermissions()
+                    Toast.makeText(this, "Таймер запущен: " + fmtDuration(ms), Toast.LENGTH_SHORT).show()
+                    timerItem?.subtitle = timerSubtitle()
+                    handler.removeCallbacks(timerTick)
+                    handler.post(timerTick)
+                }
+            }
+        )
+    }
+
     override fun onHover(item: XmbItem?) {
         music.setHover(item?.key?.let { media.music(it) })
     }
@@ -494,6 +719,16 @@ class MainActivity : Activity(), XmbView.Listener {
                 REQ_BG_LAND -> key != null && media.saveBackground(uri, key, landscape = true)
                 REQ_APP_MUSIC -> key != null && media.saveMusic(uri, key)
                 REQ_GLOBAL_MUSIC -> media.saveMusic(uri, null)
+                REQ_ALARM_SOUND -> {
+                    val id = key?.toIntOrNull()
+                    val path = media.saveAlarmSound(uri, "a$id")
+                    val a = if (id != null) AlarmStore.get(this, id) else null
+                    if (path != null && a != null) { a.sound = path; AlarmStore.update(this, a); true } else false
+                }
+                REQ_DEFAULT_ALARM_SOUND -> {
+                    val path = media.saveAlarmSound(uri, "default")
+                    if (path != null) { AlarmStore.setDefaultSound(this, path); true } else false
+                }
                 else -> false
             }
             runOnUiThread {
@@ -503,6 +738,10 @@ class MainActivity : Activity(), XmbView.Listener {
                     return@runOnUiThread
                 }
                 when (requestCode) {
+                    REQ_ALARM_SOUND, REQ_DEFAULT_ALARM_SOUND -> {
+                        Toast.makeText(this, "Мелодия будильника установлена", Toast.LENGTH_SHORT).show()
+                        refreshMenu()
+                    }
                     REQ_GLOBAL_MUSIC -> {
                         music.setGlobal(media.globalMusic())
                         musicItem?.subtitle = musicSubtitle()
@@ -750,5 +989,7 @@ class MainActivity : Activity(), XmbView.Listener {
         private const val REQ_BG_LAND = 102
         private const val REQ_APP_MUSIC = 103
         private const val REQ_GLOBAL_MUSIC = 104
+        private const val REQ_ALARM_SOUND = 105
+        private const val REQ_DEFAULT_ALARM_SOUND = 106
     }
 }

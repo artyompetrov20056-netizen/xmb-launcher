@@ -1011,8 +1011,14 @@ class XmbView(context: Context) : View(context) {
         val cx = (safeL + w - safeR) / 2f
         val bottom = h - safeB - u * (if (banner) 0.08f else 0.03f)
         tmpRect.set(cx - boxW / 2f, bottom - boxH, cx + boxW / 2f, bottom)
-        hintBg.alpha = (alpha * (if (banner) 170f else 110f)).toInt()
-        c.drawRoundRect(tmpRect, iconR * 1.2f, iconR * 1.2f, hintBg)
+        // плашка в стиле рамки часов XMB: лёгкое затемнение, тонкая белая линия
+        hintBg.alpha = (alpha * (if (banner) 70f else 45f)).toInt()
+        c.drawRoundRect(tmpRect, u * 0.008f, u * 0.008f, hintBg)
+        boxFill.alpha = (alpha * 18f).toInt()
+        c.drawRoundRect(tmpRect, u * 0.008f, u * 0.008f, boxFill)
+        boxLine.strokeWidth = max(1f, u * 0.0016f)
+        boxLine.alpha = (alpha * 85f).toInt()
+        c.drawRoundRect(tmpRect, u * 0.008f, u * 0.008f, boxLine)
 
         var y = tmpRect.top + pad * 0.5f
         if (banner) {
