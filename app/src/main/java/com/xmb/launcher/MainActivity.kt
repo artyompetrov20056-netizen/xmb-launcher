@@ -149,6 +149,10 @@ class MainActivity : Activity(), XmbView.Listener {
 
     private fun refreshMenu() = xmb.setCategories(buildCategories())
 
+    @Suppress("DEPRECATION")
+    private fun appVersion(): String =
+        try { packageManager.getPackageInfo(packageName, 0).versionName ?: "?" } catch (_: Exception) { "?" }
+
     private fun themeName() = if (autoTheme) XmbTheme.AUTO_NAME else XmbTheme.ALL[themeIndex].name
 
     private fun buildCategories(): List<XmbCategory> {
@@ -189,6 +193,7 @@ class MainActivity : Activity(), XmbView.Listener {
                 Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)),
             settingsItem("Все настройки", "Системные настройки Android", Glyph.GEAR,
                 Intent(Settings.ACTION_SETTINGS)),
+            XmbItem("О рабочем столе XMB", "Версия ${appVersion()}", Glyph.INFO),
         )
 
         val favItems: List<XmbItem> = when (list) {
