@@ -35,13 +35,15 @@ object Glyphs {
 
     /** Толщина линий значков — задаётся стилем оформления. */
     var weight = 1f
+    /** Цвет значков — задаётся стилем оформления. */
+    var tint = Color.WHITE
 
     fun draw(c: Canvas, g: Glyph, cx: Float, cy: Float, size: Float, alpha: Int) {
         val a = alpha.coerceIn(0, 255)
-        stroke.color = Color.WHITE
+        stroke.color = tint
         stroke.alpha = a
         stroke.strokeWidth = 0.075f * weight
-        fill.color = Color.WHITE
+        fill.color = tint
         fill.alpha = a
 
         c.save()
@@ -149,7 +151,7 @@ object Glyphs {
                     fill.alpha = a
                     c.drawCircle((cos(ang) * 0.20).toFloat(), (sin(ang) * 0.20).toFloat(), 0.10f, fill)
                 }
-                fill.color = Color.WHITE
+                fill.color = tint
                 fill.alpha = a
             }
             Glyph.HOME -> {

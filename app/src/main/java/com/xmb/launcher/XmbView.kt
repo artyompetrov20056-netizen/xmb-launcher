@@ -415,8 +415,14 @@ class XmbView(context: Context) : View(context) {
         bg.draw(c, width, height, unit, orient, time)
         drawPicture(c)
         if (categories.isNotEmpty()) {
+            // наклон всего меню (стиль «Хром»)
+            val tilt = bg.style.tilt
+            c.save()
+            if (tilt != 0f) c.rotate(tilt, width / 2f, height / 2f)
+            if (wheel()) drawWheelRings(c)
             drawItems(c)
             drawCategories(c)
+            c.restore()
         }
         drawClock(c)
 
@@ -529,14 +535,15 @@ class XmbView(context: Context) : View(context) {
             if (cl > 0.05f) drawGlow(c, x, y, size * 1.25f, glowScale() * catAlpha * cl * (0.55f + 0.15f * sin(time * 3f)))
             drawIcon(c, cat.items[j], x, y, size, a.toInt(), cl)
 
-            val la = a * (1f - orient)
+            val la = a * (1f - labelOrient())
             if (la > 3f) drawLandscapeLabel(c, cat.items[j], x, y, size, cl, la)
         }
 
-        if (orient > 0.01f) {
+        val lo = labelOrient()
+        if (lo > 0.01f) {
             val jn = pos.roundToInt().coerceIn(0, cat.items.lastIndex)
             val cl = max(0f, 1f - abs(jn - pos))
-            drawPortraitLabel(c, cat.items[jn], catAlpha * cl * orient)
+            drawPortraitLabel(c, cat.items[jn], catAlpha * cl * lo, itemX(jn - pos), itemY(jn - pos))
         }
     }
 
@@ -553,7 +560,7 @@ class XmbView(context: Context) : View(context) {
             if (x < -size * 2 || x > w + size * 2 || y < -size * 2 || y > h + size * 2) continue
             if (cl > 0.05f) drawGlow(c, x, y, size * 1.15f, glowScale() * cl * 0.45f)
             val ga = (255 * lerp(0.6f, 1f, cl)).toInt()
-            VisualStyles.drawFrame(c, bg.style, x, y, size * 0.85f, ga, cl)
+            VisualStyles.drawFrame(c, bg.style, x, y, size * 0.85f, ga, cl, time)
             Glyphs.draw(c, categories[i].glyph, x, y, size * (if (bg.style.frame == FrameKind.NONE) 0.85f else 0.62f), ga)
             if (cl > 0.02f) {
                 catPaint.alpha = (255 * cl).toInt()
@@ -572,12 +579,14 @@ class XmbView(context: Context) : View(context) {
     /** Текущий стиль оформления (фон + вид иконок). */
     fun setVisualStyle(s: VisualStyle) {
         bg.setStyle(s, animate = true)
+        for (p in arrayOf(titlePaint, subPaint, catPaint, clockPaint)) p.color = s.ink
+        boxLine.color = s.ink
         invalidate()
     }
 
     private fun drawIcon(c: Canvas, item: XmbItem, x: Float, y: Float, size: Float, alpha: Int, sel: Float = 0f) {
         val st = bg.style
-        VisualStyles.drawFrame(c, st, x, y, size * 0.8f, alpha, sel)
+        VisualStyles.drawFrame(c, st, x, y, size * 0.8f, alpha, sel, time)
         val bmp = item.icon
         if (bmp != null) {
             val s = size * (if (st.frame == FrameKind.NONE || st.frame == FrameKind.GLOW) 0.46f else 0.40f)
@@ -616,12 +625,12 @@ class XmbView(context: Context) : View(context) {
         }
     }
 
-    private fun drawPortraitLabel(c: Canvas, item: XmbItem, f: Float) {
+    private fun drawPortraitLabel(c: Canvas, item: XmbItem, f: Float, ix: Float, iy: Float) {
         val a = (255 * f).toInt()
         if (a < 3) return
         val size = itemSize * 1.45f
-        val tx = pItemSelX - size * 0.5f
-        val ty = pAnchorY + size * 0.5f + unit * 0.075f
+        val tx = ix - size * 0.5f
+        val ty = iy + size * 0.5f + unit * (if (bg.style.frame == FrameKind.CHROME) 0.11f else 0.075f)
         val avail = width - safeR - tx - unit * 0.05f
         if (avail < 20f) return
         titlePaint.textSize = unit * 0.045f
@@ -667,13 +676,72 @@ class XmbView(context: Context) : View(context) {
         else -> before + (d + 1f) * sp
     }
 
-    private fun catX(i: Int) = lerp(lAnchorX + (i - catPos) * lCatSp, pAnchorX, orient)
-    private fun catY(i: Int) = lerp(lRowY, pAnchorY + (i - catPos) * pCatSp, orient)
-    private fun itemX(d: Float) = lerp(lAnchorX, along(d, pItemSelX, pItemBeforeX, pItemSp, unit * 0.04f), orient)
-    private fun itemY(d: Float) = lerp(along(d, lItemSelY, lItemBeforeY, lItemSp, unit * 0.05f), pAnchorY, orient)
+    private fun catX(i: Int) = if (wheel()) wheelCX() + wheelRc() * kotlin.math.cos(catAngle(i))
+        else lerp(lAnchorX + (i - catPos) * lCatSp, pAnchorX, orient)
+    private fun catY(i: Int) = if (wheel()) wheelCY() + wheelRc() * sin(catAngle(i))
+        else lerp(lRowY, pAnchorY + (i - catPos) * pCatSp, orient)
+    private fun itemX(d: Float) = if (wheel()) wheelCX() + wheelRi() * kotlin.math.cos(itemAngle(d))
+        else lerp(lAnchorX, along(d, pItemSelX, pItemBeforeX, pItemSp, unit * 0.04f), orient)
+    private fun itemY(d: Float) = if (wheel()) wheelCY() + wheelRi() * sin(itemAngle(d))
+        else lerp(along(d, lItemSelY, lItemBeforeY, lItemSp, unit * 0.05f), pAnchorY, orient)
+
+    // ---------------- раскладка «колесо» (стиль «Веб-кор») ----------------
+
+    /** Меню закручено в колесо: категории — на внутреннем кольце, приложения — на внешнем. */
+    private fun wheel() = bg.style.layout == 1
+    private fun labelOrient() = if (wheel()) (if (height > width) 1f else 0f) else orient
+    private fun wheelCX() = safeL - unit * 0.42f
+    private fun wheelCY() = height * 0.44f
+    private fun wheelRc() = unit * 0.78f
+    private fun wheelRi() = unit * 1.20f
+    private fun catAngle(i: Int) = (i - catPos) * 0.33f
+    private fun itemAngle(d: Float): Float {
+        val step = unit * 0.19f / wheelRi()
+        val extra = unit * (if (height > width) 0.14f else 0.05f) / wheelRi()
+        return d * step + (if (d >= 0f) min(d, 1f) else max(d, -1f)) * extra
+    }
+
+    private fun drawWheelRings(c: Canvas) {
+        val cx = wheelCX()
+        val cy = wheelCY()
+        boxLine.strokeWidth = max(1f, unit * 0.0022f)
+        boxLine.alpha = 70
+        c.drawCircle(cx, cy, wheelRc(), boxLine)
+        c.drawCircle(cx, cy, wheelRi(), boxLine)
+        boxLine.alpha = 35
+        c.drawCircle(cx, cy, (wheelRc() + wheelRi()) / 2f, boxLine)
+        // риски, вращающиеся вместе с категориями
+        boxLine.alpha = 90
+        for (k in -40..40) {
+            val ang = (k - (catPos * 3f) % 1f) * 0.11f
+            val r1 = wheelRc() - unit * 0.06f
+            val r2 = r1 - unit * (if (k % 3 == 0) 0.035f else 0.018f)
+            c.drawLine(cx + r1 * kotlin.math.cos(ang), cy + r1 * sin(ang), cx + r2 * kotlin.math.cos(ang), cy + r2 * sin(ang), boxLine)
+        }
+        // указатель выбранного
+        boxLine.alpha = 160
+        val px = cx + wheelRi() + itemSize * 1.1f
+        c.drawLine(px, cy - unit * 0.02f, px + unit * 0.03f, cy, boxLine)
+        c.drawLine(px, cy + unit * 0.02f, px + unit * 0.03f, cy, boxLine)
+    }
+
+    /** Координаты касания в системе наклонённого меню. */
+    private val localPt = FloatArray(2)
+    private fun toLocal(x: Float, y: Float): FloatArray {
+        val t = bg.style.tilt
+        if (t == 0f) { localPt[0] = x; localPt[1] = y; return localPt }
+        val a = -t * PI.toFloat() / 180f
+        val cx = width / 2f
+        val cy = height / 2f
+        val dx = x - cx
+        val dy = y - cy
+        localPt[0] = cx + dx * kotlin.math.cos(a) - dy * sin(a)
+        localPt[1] = cy + dx * sin(a) + dy * kotlin.math.cos(a)
+        return localPt
+    }
 
     private fun currentCat() = if (categories.isEmpty()) 0 else catPos.roundToInt().coerceIn(0, categories.lastIndex)
-    private fun portraitNow() = orient > 0.5f
+    private fun portraitNow() = wheel() || orient > 0.5f
 
     // =====================================================================
     // Управление: касания
@@ -704,12 +772,15 @@ class XmbView(context: Context) : View(context) {
                     removeCallbacks(longPressRunnable)
                     val horizontal = abs(dx) > abs(dy)
                     // Альбомная: горизонтальный свайп — категории. Портретная: вертикальный свайп — категории.
-                    dragAxis = if (horizontal != portraitNow()) AXIS_CAT else AXIS_ITEM
+                    dragAxis = if (wheel()) {
+                        // колесо: левее середины между кольцами — категории, правее — приложения
+                        if (toLocal(downX, downY)[0] < wheelCX() + (wheelRc() + wheelRi()) / 2f) AXIS_CAT else AXIS_ITEM
+                    } else if (horizontal != portraitNow()) AXIS_CAT else AXIS_ITEM
                     dragCat = currentCat()
                     dragStart = if (dragAxis == AXIS_CAT) catPos else itemPos[dragCat]
-                    dragOrigin = if (portraitNow() == (dragAxis == AXIS_CAT)) dy else dx
+                    dragOrigin = if (wheel() || portraitNow() == (dragAxis == AXIS_CAT)) dy else dx
                 }
-                val delta = (if (portraitNow() == (dragAxis == AXIS_CAT)) dy else dx) - dragOrigin
+                val delta = (if (wheel() || portraitNow() == (dragAxis == AXIS_CAT)) dy else dx) - dragOrigin
                 when (dragAxis) {
                     AXIS_CAT -> {
                         catPos = rubber(dragStart - delta / catSpacing(), 0f, (categories.size - 1).toFloat())
@@ -726,7 +797,7 @@ class XmbView(context: Context) : View(context) {
                 val vt = velocity
                 vt?.addMovement(e)
                 vt?.computeCurrentVelocity(1000)
-                val v = if (vt == null) 0f else if (portraitNow() == (dragAxis == AXIS_CAT)) vt.yVelocity else vt.xVelocity
+                val v = if (vt == null) 0f else if (wheel() || portraitNow() == (dragAxis == AXIS_CAT)) vt.yVelocity else vt.xVelocity
                 when (dragAxis) {
                     AXIS_CAT -> {
                         val proj = catPos - v * 0.08f / catSpacing()
@@ -765,8 +836,8 @@ class XmbView(context: Context) : View(context) {
         invalidate()
     }
 
-    private fun catSpacing() = lerp(lCatSp, pCatSp, orient)
-    private fun itemSpacing() = lerp(lItemSp, pItemSp, orient)
+    private fun catSpacing() = if (wheel()) wheelRc() * 0.33f else lerp(lCatSp, pCatSp, orient)
+    private fun itemSpacing() = if (wheel()) unit * 0.19f else lerp(lItemSp, pItemSp, orient)
 
     private fun rubber(v: Float, lo: Float, hi: Float) = when {
         v < lo -> lo + (v - lo) * 0.3f
@@ -775,7 +846,10 @@ class XmbView(context: Context) : View(context) {
     }
 
     /** Индекс пункта под пальцем, или -1. */
-    private fun hitItem(x: Float, y: Float): Int {
+    private fun hitItem(x0: Float, y0: Float): Int {
+        val lp = toLocal(x0, y0)
+        val x = lp[0]
+        val y = lp[1]
         val ci = currentCat()
         val cat = categories.getOrNull(ci) ?: return -1
         val pos = itemPos[ci]
@@ -867,8 +941,9 @@ class XmbView(context: Context) : View(context) {
             else itemTarget[ci] = hit
             return
         }
+        val lp = toLocal(x, y)
         for (i in categories.indices) {
-            if (hypot(x - catX(i), y - catY(i)) < catSize * 0.8f) {
+            if (hypot(lp[0] - catX(i), lp[1] - catY(i)) < catSize * 0.8f) {
                 val c = categories[i]
                 if (i == catTarget && abs(catPos - i) < 0.3f && c.tapOpens && c.items.isNotEmpty()) {
                     scheduleActivate(c.items[0])

@@ -125,6 +125,7 @@ class XmbBackground {
     fun setStyle(s: VisualStyle, animate: Boolean) {
         style = s
         Glyphs.weight = s.weight
+        Glyphs.tint = s.ink
         updateTargets()
         if (!animate) snapColors()
     }
@@ -146,6 +147,7 @@ class XmbBackground {
         autoTheme = prefs.getBoolean("theme_auto", false)
         style = VisualStyles.current(context)
         Glyphs.weight = style.weight
+        Glyphs.tint = style.ink
         setTheme(XmbTheme.ALL[idx], animate = false)
     }
 
@@ -189,6 +191,8 @@ class XmbBackground {
             Scene.RIBBONS -> drawRibbons(c, w, h, unit, orient, time)
             Scene.LIGHT -> drawLight(c, w, h, unit, time)
             Scene.PARTICLES -> drawParticles(c, w, h, unit, time)
+            Scene.CHROME -> drawChrome(c, w, h, unit, time)
+            Scene.WEBCORE -> drawWebcore(c, w, h, unit, time)
         }
     }
 
@@ -524,6 +528,201 @@ class XmbBackground {
             c.save(); c.translate(x * w, y * h); c.scale(r, r); c.drawCircle(0f, 0f, 1f, warmGlow); c.restore()
         }
     }
+
+    // ---------------- Хром: планета, сетка-пол, рамка из бусин ----------------
+
+    private val starN = 90
+    private val starX = FloatArray(starN) { rnd.nextFloat() }
+    private val starY = FloatArray(starN) { rnd.nextFloat() * 0.75f }
+    private val starP = FloatArray(starN) { rnd.nextFloat() * 6.28f }
+    private val orbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = RadialGradient(-0.3f, -0.35f, 1.25f,
+            intArrayOf(Color.rgb(250, 248, 255), Color.rgb(196, 190, 236), Color.rgb(110, 100, 190), Color.rgb(40, 30, 96)),
+            floatArrayOf(0f, 0.3f, 0.7f, 1f), Shader.TileMode.CLAMP)
+    }
+    private val rainbow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = android.graphics.SweepGradient(0f, 0f,
+            intArrayOf(Color.RED, Color.YELLOW, Color.GREEN, Color.CYAN, Color.BLUE, Color.MAGENTA, Color.RED), null)
+    }
+    private val beadPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = RadialGradient(-0.35f, -0.4f, 1.3f,
+            intArrayOf(Color.WHITE, Color.rgb(170, 172, 200), Color.rgb(60, 58, 90)),
+            floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP)
+    }
+
+    private fun drawChrome(c: Canvas, w: Float, h: Float, unit: Float, time: Float) {
+        // звёзды
+        for (i in 0 until starN) {
+            sparkPaint.alpha = (60 + 150 * (0.5f + 0.5f * sin(time * 1.8f + starP[i]))).toInt()
+            c.drawCircle(starX[i] * w, starY[i] * h, unit * (0.0015f + 0.0015f * (i % 3)), sparkPaint)
+        }
+        // хромовая планета с радужным переливом
+        val ox = w * 0.66f
+        val oy = h * 0.26f
+        val orr = unit * 0.30f
+        orbPaint.alpha = 235
+        c.save(); c.translate(ox, oy); c.scale(orr, orr); c.drawCircle(0f, 0f, 1f, orbPaint)
+        c.rotate(time * 14f)
+        rainbow.alpha = 55
+        c.drawCircle(0f, 0f, 1f, rainbow)
+        c.restore()
+        fill.color = Color.WHITE
+        fill.alpha = 170
+        c.drawOval(ox - orr * 0.55f, oy - orr * 0.78f, ox - orr * 0.05f, oy - orr * 0.52f, fill)
+        // тонкий полумесяц-кольцо
+        stroke.color = Color.WHITE
+        stroke.strokeWidth = max(1.5f, unit * 0.004f)
+        stroke.alpha = 120
+        c.drawArc(ox - orr * 1.18f, oy - orr * 1.18f, ox + orr * 1.18f, oy + orr * 1.18f, 120f + 10f * sin(time * 0.3f), 140f, false, stroke)
+
+        // сетка-пол в перспективе, едет на нас
+        val horizon = h * 0.70f
+        stroke.strokeWidth = max(1f, unit * 0.0022f)
+        stroke.color = Color.rgb(255, 120, 230)
+        val scroll = (time * 0.35f) % 1f
+        for (k in 0 until 14) {
+            val z = (k + 1f - scroll)
+            val y = horizon + (h - horizon) * (1f / z) * 0.9f
+            if (y <= horizon + 1f || y > h) continue
+            stroke.alpha = (40 + 120 * (1f / z)).toInt().coerceAtMost(200)
+            c.drawLine(0f, y, w, y, stroke)
+        }
+        stroke.alpha = 70
+        for (k in -12..12) {
+            val xb = w / 2f + k * w * 0.16f
+            c.drawLine(w / 2f + k * w * 0.012f, horizon, xb, h, stroke)
+        }
+        stroke.color = Color.WHITE
+
+        // рамка экрана из хромовых бусин, по ним бежит блеск
+        val m = unit * 0.028f
+        val br = unit * 0.011f
+        val step = unit * 0.036f
+        val perim = 2f * (w + h - 4f * m)
+        var d = 0f
+        val glint = (time * 0.18f % 1f) * perim
+        while (d < perim) {
+            val pxy = perimeterPoint(d, w, h, m)
+            val dist = abs(d - glint).let { min(it, perim - it) }
+            beadPaint.alpha = (150 + 105 * exp(-dist * dist / (unit * unit * 0.02f))).toInt().coerceAtMost(255)
+            c.save(); c.translate(pxy[0], pxy[1]); c.scale(br, br); c.drawCircle(0f, 0f, 1f, beadPaint); c.restore()
+            d += step
+        }
+    }
+
+    private val ppt = FloatArray(2)
+    private fun perimeterPoint(d0: Float, w: Float, h: Float, m: Float): FloatArray {
+        var d = d0
+        val tw = w - 2 * m
+        val th = h - 2 * m
+        when {
+            d < tw -> { ppt[0] = m + d; ppt[1] = m }
+            d < tw + th -> { d -= tw; ppt[0] = w - m; ppt[1] = m + d }
+            d < 2 * tw + th -> { d -= tw + th; ppt[0] = w - m - d; ppt[1] = h - m }
+            else -> { d -= 2 * tw + th; ppt[0] = m; ppt[1] = h - m - d }
+        }
+        return ppt
+    }
+
+    // ---------------- Веб-кор: точечная матрица, сетка, ползунки ----------------
+
+    private var dotBuf = Array(4) { FloatArray(0) }
+    private val dotCount = IntArray(4)
+    private val dotPaint = Paint().apply { strokeCap = Paint.Cap.SQUARE }
+    private val mono = android.text.TextPaint(Paint.ANTI_ALIAS_FLAG).apply { typeface = android.graphics.Typeface.MONOSPACE }
+    private val scan = Path()
+    private var scanH = -1
+    private val inkOlive = Color.rgb(196, 206, 90)
+    private val inkRed = Color.rgb(150, 52, 40)
+
+    private fun drawWebcore(c: Canvas, w: Float, h: Float, unit: Float, time: Float) {
+        // бордовая сетка
+        stroke.color = inkRed
+        stroke.strokeWidth = max(1f, unit * 0.003f)
+        stroke.alpha = 70
+        val g = unit * 0.2f
+        val gx = (time * unit * 0.01f) % g
+        var x = -g + gx
+        while (x < w) { c.drawLine(x, 0f, x, h, stroke); x += g }
+        var y = 0f
+        while (y < h) { c.drawLine(0f, y, w, y, stroke); y += g }
+
+        // точечная матрица с «дизерингом»: 4 уровня яркости
+        val stepD = unit * 0.018f
+        val cols = (w / stepD).toInt() + 1
+        val rows = (h / stepD).toInt() + 1
+        val need = cols * rows * 2
+        for (l in 0 until 4) { if (dotBuf[l].size < need) dotBuf[l] = FloatArray(need); dotCount[l] = 0 }
+        for (iy in 0 until rows) {
+            val yy = iy * stepD
+            for (ix in 0 until cols) {
+                val xx = ix * stepD
+                val v = sin(xx * 0.004f + time * 0.6f) + sin(yy * 0.003f - time * 0.45f) + sin((xx + yy) * 0.0025f + time * 0.3f)
+                val dith = (((ix and 1) * 2 + (iy and 1)) / 4f) * 0.6f
+                val lv = (((v + 3f) / 6f) * 4f + dith - 0.9f).toInt()
+                if (lv < 0) continue
+                val l = min(lv, 3)
+                val buf = dotBuf[l]
+                val n = dotCount[l]
+                buf[n] = xx; buf[n + 1] = yy
+                dotCount[l] = n + 2
+            }
+        }
+        dotPaint.strokeWidth = stepD * 0.55f
+        dotPaint.color = inkOlive
+        for (l in 0 until 4) {
+            dotPaint.alpha = 18 + l * 26
+            c.drawPoints(dotBuf[l], 0, dotCount[l], dotPaint)
+        }
+
+        // бегущие ползунки справа
+        val bx = w - unit * 0.30f
+        stroke.color = inkOlive
+        fill.color = inkOlive
+        for (k in 0 until 5) {
+            val yy = h * 0.12f + k * unit * 0.07f
+            val len = unit * 0.24f
+            stroke.alpha = 90
+            c.drawLine(bx, yy, bx + len, yy, stroke)
+            val p = 0.5f + 0.5f * sin(time * (0.6f + 0.25f * k) + k * 1.3f)
+            fill.alpha = 200
+            c.drawRect(bx + p * (len - unit * 0.03f), yy - unit * 0.008f, bx + p * (len - unit * 0.03f) + unit * 0.03f, yy + unit * 0.008f, fill)
+        }
+        // полосы загрузки снизу слева
+        for (k in 0 until 3) {
+            val yy = h * 0.88f + k * unit * 0.035f
+            val len = unit * 0.36f
+            val p = ((time * (0.12f + 0.07f * k) + k * 0.31f) % 1f)
+            stroke.alpha = 70
+            c.drawRect(unit * 0.05f, yy, unit * 0.05f + len, yy + unit * 0.014f, stroke)
+            fill.alpha = 150
+            c.drawRect(unit * 0.05f, yy, unit * 0.05f + len * p, yy + unit * 0.014f, fill)
+        }
+        // счётчики
+        mono.color = inkOlive
+        mono.alpha = 170
+        mono.textSize = unit * 0.03f
+        val t = (time * 37f).toInt()
+        c.drawText(String.format(java.util.Locale.US, "%03d·%03d", (t / 7) % 1000, t % 1000), w - unit * 0.30f, h * 0.08f, mono)
+        c.drawText(String.format(java.util.Locale.US, "SYNC %05.2f", (time * 3.7f) % 100f), unit * 0.05f, h * 0.86f, mono)
+        fill.color = Color.WHITE
+        stroke.color = Color.WHITE
+
+        // развёртка
+        if (scanH != height(h)) {
+            scanH = height(h)
+            scan.rewind()
+            var sy = 0f
+            while (sy < h) { scan.moveTo(0f, sy); scan.lineTo(w * 4f, sy); sy += 4f }
+        }
+        stroke.color = Color.BLACK
+        stroke.strokeWidth = 1.5f
+        stroke.alpha = 40
+        c.drawPath(scan, stroke)
+        stroke.color = Color.WHITE
+    }
+
+    private fun height(h: Float) = h.toInt()
 
     // =====================================================================
 
