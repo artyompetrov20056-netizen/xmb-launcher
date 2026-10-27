@@ -140,10 +140,30 @@ object AlarmStore {
     /** Остаток на паузе (мс), 0 — не на паузе. */
     fun timerPaused(ctx: Context) = prefs(ctx).getLong("timer_left", 0L)
 
-    fun startTimer(ctx: Context, durationMs: Long) {
+    /** Полная длительность текущего таймера (для кольца прогресса). */
+    fun timerTotal(ctx: Context) = prefs(ctx).getLong("timer_total", 0L)
+
+    fun startTimer(ctx: Context, durationMs: Long, total: Long = durationMs) {
         val end = System.currentTimeMillis() + durationMs
-        prefs(ctx).edit().putLong("timer_end", end).putLong("timer_left", 0L).apply()
+        prefs(ctx).edit().putLong("timer_end", end).putLong("timer_left", 0L).putLong("timer_total", total).apply()
         set(ctx, KIND_TIMER, 0, end)
+        if (total == durationMs) addRecent(ctx, durationMs)
+    }
+
+    /** Последние запущенные длительности (для быстрых кнопок), самые свежие первыми. */
+    fun recentTimers(ctx: Context): List<Long> {
+        val raw = prefs(ctx).getString("timer_recent", null)
+        val list = raw?.split(',')?.mapNotNull { it.toLongOrNull() } ?: emptyList()
+        val defaults = listOf(60_000L, 180_000L, 300_000L, 600_000L, 900_000L, 1_800_000L)
+        return (list + defaults.filter { it !in list }).take(6)
+    }
+
+    private fun addRecent(ctx: Context, ms: Long) {
+        val raw = prefs(ctx).getString("timer_recent", null)
+        val list = raw?.split(',')?.mapNotNull { it.toLongOrNull() }?.toMutableList() ?: ArrayList()
+        list.remove(ms)
+        list.add(0, ms)
+        prefs(ctx).edit().putString("timer_recent", list.take(6).joinToString(",")).apply()
     }
 
     fun pauseTimer(ctx: Context) {
@@ -156,7 +176,7 @@ object AlarmStore {
 
     fun resumeTimer(ctx: Context) {
         val left = timerPaused(ctx)
-        if (left > 0) startTimer(ctx, left)
+        if (left > 0) startTimer(ctx, left, timerTotal(ctx).coerceAtLeast(left))
     }
 
     fun cancelTimer(ctx: Context) {
@@ -241,6 +261,58 @@ object AlarmStore {
         val op = operation(ctx, kind, id, PendingIntent.FLAG_NO_CREATE) ?: return
         am.cancel(op)
         op.cancel()
+    }
+}
+
+/** Секундомер: идёт по монотонным часам, продолжает считать в фоне. */
+object StopwatchStore {
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences("xmb_clock", Context.MODE_PRIVATE)
+    private fun now() = android.os.SystemClock.elapsedRealtime()
+
+    fun running(ctx: Context) = prefs(ctx).getBoolean("sw_running", false)
+
+    fun elapsed(ctx: Context): Long {
+        val p = prefs(ctx)
+        val acc = p.getLong("sw_acc", 0L)
+        if (!p.getBoolean("sw_running", false)) return acc
+        val start = p.getLong("sw_start", now())
+        // после перезагрузки монотонные часы начинаются заново
+        if (start > now()) return acc
+        return acc + (now() - start)
+    }
+
+    fun start(ctx: Context) {
+        if (running(ctx)) return
+        prefs(ctx).edit().putBoolean("sw_running", true).putLong("sw_start", now()).apply()
+    }
+
+    fun pause(ctx: Context) {
+        if (!running(ctx)) return
+        val e = elapsed(ctx)
+        prefs(ctx).edit().putBoolean("sw_running", false).putLong("sw_acc", e).apply()
+    }
+
+    fun reset(ctx: Context) {
+        prefs(ctx).edit().putBoolean("sw_running", false).putLong("sw_acc", 0L).putString("sw_laps", "").apply()
+    }
+
+    /** Отметки кругов — общее время на момент круга. */
+    fun laps(ctx: Context): List<Long> =
+        prefs(ctx).getString("sw_laps", "")!!.split(',').mapNotNull { it.toLongOrNull() }
+
+    fun lap(ctx: Context) {
+        if (!running(ctx)) return
+        val list = laps(ctx) + elapsed(ctx)
+        prefs(ctx).edit().putString("sw_laps", list.takeLast(99).joinToString(",")).apply()
+    }
+
+    fun format(ms: Long): String {
+        val cs = (ms / 10) % 100
+        val s = (ms / 1000) % 60
+        val m = (ms / 60_000) % 60
+        val h = ms / 3_600_000
+        return if (h > 0) String.format(java.util.Locale.US, "%d:%02d:%02d.%02d", h, m, s, cs)
+        else String.format(java.util.Locale.US, "%02d:%02d.%02d", m, s, cs)
     }
 }
 

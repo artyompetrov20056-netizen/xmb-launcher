@@ -15,7 +15,7 @@ enum class Glyph {
     WIFI, BLUETOOTH, DISPLAY, SOUND, PALETTE, HOME, GEAR, INFO, EMPTY,
     FAVORITE, SEARCH, LOCK,
     TORCH, PLAY, PAUSE, PREV, NEXT,
-    ALARM, TIMER, PLUS
+    ALARM, TIMER, PLUS, HOURGLASS
 }
 
 /**
@@ -240,6 +240,18 @@ object Glyphs {
                 c.drawLine(0f, -0.40f, 0f, -0.27f, stroke)
                 c.drawLine(0.25f, -0.22f, 0.32f, -0.29f, stroke)
                 c.drawLine(0f, 0.06f, 0.14f, -0.08f, stroke)
+            }
+            Glyph.HOURGLASS -> { // песочные часы
+                c.drawLine(-0.26f, -0.40f, 0.26f, -0.40f, stroke)
+                c.drawLine(-0.26f, 0.40f, 0.26f, 0.40f, stroke)
+                path.rewind()
+                path.moveTo(-0.20f, -0.40f); path.lineTo(0.20f, -0.40f)
+                path.lineTo(0.03f, 0f); path.lineTo(0.20f, 0.40f)
+                path.lineTo(-0.20f, 0.40f); path.lineTo(-0.03f, 0f); path.close()
+                c.drawPath(path, stroke)
+                path.rewind()
+                path.moveTo(-0.11f, 0.33f); path.lineTo(0.11f, 0.33f); path.lineTo(0f, 0.16f); path.close()
+                c.drawPath(path, fill)
             }
             Glyph.PLUS -> {
                 c.drawCircle(0f, 0f, 0.40f, stroke)

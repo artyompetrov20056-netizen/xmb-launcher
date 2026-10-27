@@ -88,6 +88,17 @@
                 android:value="Custom lock screen cover shown when the screen turns off" />
         </service>
 
+        <!-- Полноэкранные часы: таймер и секундомер -->
+        <activity
+            android:name=".ClockActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode"
+            android:excludeFromRecents="false"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:screenOrientation="fullUser"
+            android:taskAffinity="com.xmb.launcher.clock"
+            android:theme="@style/Theme.Xmb" />
+
         <!-- Будильник: экран звонка, звонок, срабатывание -->
         <activity
             android:name=".AlarmActivity"

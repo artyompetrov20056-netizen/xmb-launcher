@@ -39,13 +39,15 @@ class MainActivity : Activity(), XmbView.Listener {
     private lateinit var music: XmbMusic
     private var pendingKey: String? = null
     private var timerItem: XmbItem? = null
+    private var stopwatchItem: XmbItem? = null
 
     /** Обратный отсчёт таймера в подписи пункта, раз в секунду. */
     private val timerTick = object : Runnable {
         override fun run() {
             timerItem?.subtitle = timerSubtitle()
+            stopwatchItem?.subtitle = stopwatchSubtitle()
             xmb.invalidate()
-            if (AlarmStore.timerEnd(this@MainActivity) > 0) {
+            if (AlarmStore.timerEnd(this@MainActivity) > 0 || StopwatchStore.running(this@MainActivity)) {
                 handler.postDelayed(this, 1000)
             } else if (timerItem?.subtitle?.startsWith("Осталось") == true) {
                 refreshMenu()
@@ -453,9 +455,12 @@ class MainActivity : Activity(), XmbView.Listener {
     private fun buildAlarmItems(): List<XmbItem> {
         val items = ArrayList<XmbItem>()
         items += XmbItem("Новый будильник", "Выбрать время", Glyph.PLUS, onClick = { it.newAlarm() })
-        val timer = XmbItem("Таймер", timerSubtitle(), Glyph.TIMER, onClick = { it.openTimer() })
+        val timer = XmbItem("Таймер", timerSubtitle(), Glyph.HOURGLASS, onClick = { it.openTimer() })
         timerItem = timer
         items += timer
+        val sw = XmbItem("Секундомер", stopwatchSubtitle(), Glyph.TIMER, onClick = { it.openStopwatch() })
+        stopwatchItem = sw
+        items += sw
         for (a in AlarmStore.load(this)) {
             val state = if (a.enabled) {
                 "Включён · " + AlarmStore.inText(AlarmStore.nextTrigger(a) - System.currentTimeMillis())
@@ -611,16 +616,54 @@ class MainActivity : Activity(), XmbView.Listener {
         )
     }
 
+    private fun restartTick() {
+        handler.removeCallbacks(timerTick)
+        handler.post(timerTick)
+    }
+
+    private fun stopwatchSubtitle(): String {
+        val e = StopwatchStore.elapsed(this)
+        return when {
+            StopwatchStore.running(this) -> StopwatchStore.format(e) + " · идёт"
+            e > 0 -> StopwatchStore.format(e) + " · пауза"
+            else -> "Не запущен"
+        }
+    }
+
+    fun openStopwatch() {
+        val running = StopwatchStore.running(this)
+        val e = StopwatchStore.elapsed(this)
+        val options = ArrayList<String>()
+        val actions = ArrayList<() -> Unit>()
+        options += if (running) "Пауза" else if (e > 0) "Продолжить" else "Старт"
+        actions += { if (running) StopwatchStore.pause(this) else StopwatchStore.start(this) }
+        if (running) { options += "Круг"; actions += { StopwatchStore.lap(this) } }
+        if (e > 0) { options += "Сбросить"; actions += { StopwatchStore.reset(this) } }
+        options += "Открыть на весь экран"
+        actions += { ClockActivity.open(this, ClockActivity.TAB_STOPWATCH) }
+        xmb.showOverlay(DialogOverlay("Секундомер", stopwatchSubtitle(), options) { pick ->
+            actions[pick]()
+            stopwatchItem?.subtitle = stopwatchSubtitle()
+            restartTick()
+        })
+    }
+
     fun openTimer() {
         val end = AlarmStore.timerEnd(this)
         val paused = AlarmStore.timerPaused(this)
-        if (end == 0L && paused == 0L) { showTimerPicker(); return }
-        val options = listOf(if (end > 0) "Пауза" else "Продолжить", "Сбросить", "Новый таймер")
+        if (end == 0L && paused == 0L) {
+            xmb.showOverlay(DialogOverlay("Таймер", null, listOf("Задать время", "Открыть на весь экран")) { pick ->
+                if (pick == 0) showTimerPicker() else ClockActivity.open(this, ClockActivity.TAB_TIMER)
+            })
+            return
+        }
+        val options = listOf(if (end > 0) "Пауза" else "Продолжить", "Сбросить", "Новый таймер", "Открыть на весь экран")
         xmb.showOverlay(DialogOverlay("Таймер", timerSubtitle(), options) { pick ->
             when (pick) {
                 0 -> if (end > 0) AlarmStore.pauseTimer(this) else AlarmStore.resumeTimer(this)
                 1 -> AlarmStore.cancelTimer(this)
                 2 -> { AlarmStore.cancelTimer(this); showTimerPicker() }
+                3 -> ClockActivity.open(this, ClockActivity.TAB_TIMER)
             }
             timerItem?.subtitle = timerSubtitle()
             handler.removeCallbacks(timerTick)
