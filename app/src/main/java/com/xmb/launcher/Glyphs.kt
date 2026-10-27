@@ -40,6 +40,7 @@ object Glyphs {
 
     fun draw(c: Canvas, g: Glyph, cx: Float, cy: Float, size: Float, alpha: Int) {
         val a = alpha.coerceIn(0, 255)
+        curAlpha = a
         stroke.color = tint
         stroke.alpha = a
         stroke.strokeWidth = 0.075f * weight
@@ -53,36 +54,36 @@ object Glyphs {
             Glyph.SETTINGS -> { // ящик с инструментами
                 rr(c, -0.42f, -0.10f, 0.42f, 0.36f, 0.07f, stroke)
                 rr(c, -0.16f, -0.30f, 0.16f, -0.10f, 0.04f, stroke)
-                c.drawLine(-0.42f, 0.08f, 0.42f, 0.08f, stroke)
+                L(c, -0.42f, 0.08f, 0.42f, 0.08f, stroke)
                 rr(c, -0.07f, 0.0f, 0.07f, 0.16f, 0.02f, fill)
             }
             Glyph.PHOTO -> { // фотоаппарат
                 rr(c, -0.42f, -0.20f, 0.42f, 0.32f, 0.08f, stroke)
                 rr(c, -0.20f, -0.33f, 0.04f, -0.20f, 0.03f, fill)
-                c.drawCircle(0f, 0.06f, 0.16f, stroke)
-                c.drawCircle(0.28f, -0.08f, 0.035f, fill)
+                C(c, 0f, 0.06f, 0.16f, stroke)
+                C(c, 0.28f, -0.08f, 0.035f, fill)
             }
             Glyph.MUSIC -> { // нота
-                r.set(-0.36f, 0.18f, -0.10f, 0.38f); c.drawOval(r, fill)
-                r.set(0.10f, 0.10f, 0.36f, 0.30f); c.drawOval(r, fill)
-                c.drawLine(-0.11f, 0.26f, -0.11f, -0.28f, stroke)
-                c.drawLine(0.35f, 0.18f, 0.35f, -0.38f, stroke)
+                r.set(-0.36f, 0.18f, -0.10f, 0.38f); O(c, r, fill)
+                r.set(0.10f, 0.10f, 0.36f, 0.30f); O(c, r, fill)
+                L(c, -0.11f, 0.26f, -0.11f, -0.28f, stroke)
+                L(c, 0.35f, 0.18f, 0.35f, -0.38f, stroke)
                 path.rewind()
                 path.moveTo(-0.11f, -0.30f); path.lineTo(0.35f, -0.40f)
                 path.lineTo(0.35f, -0.26f); path.lineTo(-0.11f, -0.16f); path.close()
-                c.drawPath(path, fill)
+                P(c, path, fill)
             }
             Glyph.VIDEO -> { // плёнка
                 rr(c, -0.40f, -0.32f, 0.40f, 0.32f, 0.03f, stroke)
-                c.drawLine(-0.24f, -0.32f, -0.24f, 0.32f, stroke)
-                c.drawLine(0.24f, -0.32f, 0.24f, 0.32f, stroke)
+                L(c, -0.24f, -0.32f, -0.24f, 0.32f, stroke)
+                L(c, 0.24f, -0.32f, 0.24f, 0.32f, stroke)
                 for (y in floatArrayOf(-0.20f, 0f, 0.20f)) {
                     rr(c, -0.36f, y - 0.05f, -0.28f, y + 0.05f, 0.01f, fill)
                     rr(c, 0.28f, y - 0.05f, 0.36f, y + 0.05f, 0.01f, fill)
                 }
                 path.rewind()
                 path.moveTo(-0.07f, -0.12f); path.lineTo(0.12f, 0f); path.lineTo(-0.07f, 0.12f); path.close()
-                c.drawPath(path, fill)
+                P(c, path, fill)
             }
             Glyph.GAME -> { // геймпад
                 path.rewind()
@@ -94,20 +95,20 @@ object Glyphs {
                 path.cubicTo(-0.30f, 0.36f, -0.42f, 0.38f, -0.46f, 0.26f)
                 path.cubicTo(-0.50f, 0.10f, -0.48f, -0.18f, -0.30f, -0.18f)
                 path.close()
-                c.drawPath(path, stroke)
-                c.drawLine(-0.33f, 0.01f, -0.13f, 0.01f, stroke)
-                c.drawLine(-0.23f, -0.09f, -0.23f, 0.11f, stroke)
-                c.drawCircle(0.23f, -0.07f, 0.035f, fill)
-                c.drawCircle(0.23f, 0.09f, 0.035f, fill)
-                c.drawCircle(0.15f, 0.01f, 0.035f, fill)
-                c.drawCircle(0.31f, 0.01f, 0.035f, fill)
+                P(c, path, stroke)
+                L(c, -0.33f, 0.01f, -0.13f, 0.01f, stroke)
+                L(c, -0.23f, -0.09f, -0.23f, 0.11f, stroke)
+                C(c, 0.23f, -0.07f, 0.035f, fill)
+                C(c, 0.23f, 0.09f, 0.035f, fill)
+                C(c, 0.15f, 0.01f, 0.035f, fill)
+                C(c, 0.31f, 0.01f, 0.035f, fill)
             }
             Glyph.NETWORK -> { // глобус
-                c.drawCircle(0f, 0f, 0.40f, stroke)
-                r.set(-0.16f, -0.40f, 0.16f, 0.40f); c.drawOval(r, stroke)
-                c.drawLine(-0.40f, 0f, 0.40f, 0f, stroke)
-                c.drawLine(-0.34f, -0.20f, 0.34f, -0.20f, stroke)
-                c.drawLine(-0.34f, 0.20f, 0.34f, 0.20f, stroke)
+                C(c, 0f, 0f, 0.40f, stroke)
+                r.set(-0.16f, -0.40f, 0.16f, 0.40f); O(c, r, stroke)
+                L(c, -0.40f, 0f, 0.40f, 0f, stroke)
+                L(c, -0.34f, -0.20f, 0.34f, -0.20f, stroke)
+                L(c, -0.34f, 0.20f, 0.34f, 0.20f, stroke)
             }
             Glyph.APPS -> { // сетка 3x3
                 for (ix in -1..1) for (iy in -1..1) {
@@ -118,38 +119,38 @@ object Glyphs {
             Glyph.WIFI -> {
                 for (rad in floatArrayOf(0.18f, 0.36f, 0.54f)) {
                     r.set(-rad, 0.30f - rad, rad, 0.30f + rad)
-                    c.drawArc(r, 225f, 90f, false, stroke)
+                    A(c, r, 225f, 90f, false, stroke)
                 }
-                c.drawCircle(0f, 0.30f, 0.055f, fill)
+                C(c, 0f, 0.30f, 0.055f, fill)
             }
             Glyph.BLUETOOTH -> {
                 path.rewind()
                 path.moveTo(-0.20f, -0.18f); path.lineTo(0.20f, 0.18f); path.lineTo(0f, 0.38f)
                 path.lineTo(0f, -0.38f); path.lineTo(0.20f, -0.18f); path.lineTo(-0.20f, 0.18f)
-                c.drawPath(path, stroke)
+                P(c, path, stroke)
             }
             Glyph.DISPLAY -> {
                 rr(c, -0.42f, -0.30f, 0.42f, 0.18f, 0.04f, stroke)
-                c.drawLine(0f, 0.18f, 0f, 0.32f, stroke)
-                c.drawLine(-0.20f, 0.34f, 0.20f, 0.34f, stroke)
+                L(c, 0f, 0.18f, 0f, 0.32f, stroke)
+                L(c, -0.20f, 0.34f, 0.20f, 0.34f, stroke)
             }
             Glyph.SOUND -> {
                 path.rewind()
                 path.moveTo(-0.40f, -0.12f); path.lineTo(-0.20f, -0.12f); path.lineTo(0f, -0.30f)
                 path.lineTo(0f, 0.30f); path.lineTo(-0.20f, 0.12f); path.lineTo(-0.40f, 0.12f); path.close()
-                c.drawPath(path, fill)
+                P(c, path, fill)
                 for (rad in floatArrayOf(0.20f, 0.36f)) {
                     r.set(-rad + 0.02f, -rad, rad + 0.02f, rad)
-                    c.drawArc(r, -45f, 90f, false, stroke)
+                    A(c, r, -45f, 90f, false, stroke)
                 }
             }
             Glyph.PALETTE -> {
-                c.drawCircle(0f, 0f, 0.40f, stroke)
+                C(c, 0f, 0f, 0.40f, stroke)
                 for (k in 0 until 4) {
                     val ang = (k * 90.0 + 45.0) * PI / 180.0
                     fill.color = XmbTheme.previewColor(k * 2)
                     fill.alpha = a
-                    c.drawCircle((cos(ang) * 0.20).toFloat(), (sin(ang) * 0.20).toFloat(), 0.10f, fill)
+                    C(c, (cos(ang) * 0.20).toFloat(), (sin(ang) * 0.20).toFloat(), 0.10f, fill)
                 }
                 fill.color = tint
                 fill.alpha = a
@@ -157,28 +158,28 @@ object Glyphs {
             Glyph.HOME -> {
                 path.rewind()
                 path.moveTo(-0.40f, 0.0f); path.lineTo(0f, -0.36f); path.lineTo(0.40f, 0.0f)
-                c.drawPath(path, stroke)
+                P(c, path, stroke)
                 path.rewind()
                 path.moveTo(-0.28f, -0.10f); path.lineTo(-0.28f, 0.36f); path.lineTo(0.28f, 0.36f); path.lineTo(0.28f, -0.10f)
-                c.drawPath(path, stroke)
+                P(c, path, stroke)
                 rr(c, -0.08f, 0.14f, 0.08f, 0.36f, 0.02f, fill)
             }
             Glyph.GEAR -> {
-                c.drawCircle(0f, 0f, 0.27f, stroke)
-                c.drawCircle(0f, 0f, 0.09f, stroke)
+                C(c, 0f, 0f, 0.27f, stroke)
+                C(c, 0f, 0f, 0.09f, stroke)
                 stroke.strokeWidth = 0.12f
                 stroke.strokeCap = Paint.Cap.BUTT
                 for (k in 0 until 8) {
                     val ang = k * PI / 4.0
                     val cs = cos(ang).toFloat(); val sn = sin(ang).toFloat()
-                    c.drawLine(cs * 0.30f, sn * 0.30f, cs * 0.43f, sn * 0.43f, stroke)
+                    L(c, cs * 0.30f, sn * 0.30f, cs * 0.43f, sn * 0.43f, stroke)
                 }
                 stroke.strokeCap = Paint.Cap.ROUND
             }
             Glyph.INFO -> {
-                c.drawCircle(0f, 0f, 0.40f, stroke)
-                c.drawCircle(0f, -0.18f, 0.05f, fill)
-                c.drawLine(0f, -0.04f, 0f, 0.22f, stroke)
+                C(c, 0f, 0f, 0.40f, stroke)
+                C(c, 0f, -0.18f, 0.05f, fill)
+                L(c, 0f, -0.04f, 0f, 0.22f, stroke)
             }
             Glyph.FAVORITE -> { // сердце
                 path.rewind()
@@ -186,33 +187,33 @@ object Glyphs {
                 path.cubicTo(-0.56f, 0.02f, -0.42f, -0.44f, 0f, -0.18f)
                 path.cubicTo(0.42f, -0.44f, 0.56f, 0.02f, 0f, 0.36f)
                 path.close()
-                c.drawPath(path, stroke)
+                P(c, path, stroke)
             }
             Glyph.SEARCH -> { // лупа
-                c.drawCircle(-0.08f, -0.08f, 0.25f, stroke)
+                C(c, -0.08f, -0.08f, 0.25f, stroke)
                 stroke.strokeWidth = 0.11f
-                c.drawLine(0.11f, 0.11f, 0.38f, 0.38f, stroke)
+                L(c, 0.11f, 0.11f, 0.38f, 0.38f, stroke)
             }
             Glyph.LOCK -> { // замок
                 rr(c, -0.30f, -0.06f, 0.30f, 0.38f, 0.06f, stroke)
                 r.set(-0.19f, -0.40f, 0.19f, 0.02f)
-                c.drawArc(r, 180f, 180f, false, stroke)
-                c.drawLine(-0.19f, -0.19f, -0.19f, -0.06f, stroke)
-                c.drawLine(0.19f, -0.19f, 0.19f, -0.06f, stroke)
-                c.drawCircle(0f, 0.14f, 0.05f, fill)
+                A(c, r, 180f, 180f, false, stroke)
+                L(c, -0.19f, -0.19f, -0.19f, -0.06f, stroke)
+                L(c, 0.19f, -0.19f, 0.19f, -0.06f, stroke)
+                C(c, 0f, 0.14f, 0.05f, fill)
             }
             Glyph.TORCH -> { // фонарик
                 path.rewind()
                 path.moveTo(-0.22f, -0.40f); path.lineTo(0.22f, -0.40f)
                 path.lineTo(0.13f, -0.14f); path.lineTo(-0.13f, -0.14f); path.close()
-                c.drawPath(path, stroke)
+                P(c, path, stroke)
                 rr(c, -0.12f, -0.14f, 0.12f, 0.40f, 0.04f, stroke)
-                c.drawCircle(0f, 0.05f, 0.04f, fill)
+                C(c, 0f, 0.05f, 0.04f, fill)
             }
             Glyph.PLAY -> {
                 path.rewind()
                 path.moveTo(-0.20f, -0.30f); path.lineTo(0.30f, 0f); path.lineTo(-0.20f, 0.30f); path.close()
-                c.drawPath(path, fill)
+                P(c, path, fill)
             }
             Glyph.PAUSE -> {
                 rr(c, -0.22f, -0.30f, -0.06f, 0.30f, 0.03f, fill)
@@ -222,50 +223,50 @@ object Glyphs {
                 rr(c, -0.34f, -0.28f, -0.24f, 0.28f, 0.02f, fill)
                 path.rewind()
                 path.moveTo(0.30f, -0.30f); path.lineTo(-0.20f, 0f); path.lineTo(0.30f, 0.30f); path.close()
-                c.drawPath(path, fill)
+                P(c, path, fill)
             }
             Glyph.NEXT -> {
                 rr(c, 0.24f, -0.28f, 0.34f, 0.28f, 0.02f, fill)
                 path.rewind()
                 path.moveTo(-0.30f, -0.30f); path.lineTo(0.20f, 0f); path.lineTo(-0.30f, 0.30f); path.close()
-                c.drawPath(path, fill)
+                P(c, path, fill)
             }
             Glyph.ALARM -> { // будильник: циферблат, стрелки, «колокольчики»
-                c.drawCircle(0f, 0.04f, 0.32f, stroke)
-                c.drawLine(0f, 0.04f, 0f, -0.14f, stroke)
-                c.drawLine(0f, 0.04f, 0.13f, 0.12f, stroke)
-                r.set(-0.46f, -0.46f, -0.14f, -0.14f); c.drawArc(r, 200f, 70f, false, stroke)
-                r.set(0.14f, -0.46f, 0.46f, -0.14f); c.drawArc(r, 270f, 70f, false, stroke)
-                c.drawLine(-0.22f, 0.30f, -0.30f, 0.40f, stroke)
-                c.drawLine(0.22f, 0.30f, 0.30f, 0.40f, stroke)
+                C(c, 0f, 0.04f, 0.32f, stroke)
+                L(c, 0f, 0.04f, 0f, -0.14f, stroke)
+                L(c, 0f, 0.04f, 0.13f, 0.12f, stroke)
+                r.set(-0.46f, -0.46f, -0.14f, -0.14f); A(c, r, 200f, 70f, false, stroke)
+                r.set(0.14f, -0.46f, 0.46f, -0.14f); A(c, r, 270f, 70f, false, stroke)
+                L(c, -0.22f, 0.30f, -0.30f, 0.40f, stroke)
+                L(c, 0.22f, 0.30f, 0.30f, 0.40f, stroke)
             }
             Glyph.TIMER -> { // секундомер
-                c.drawCircle(0f, 0.06f, 0.33f, stroke)
-                c.drawLine(-0.10f, -0.40f, 0.10f, -0.40f, stroke)
-                c.drawLine(0f, -0.40f, 0f, -0.27f, stroke)
-                c.drawLine(0.25f, -0.22f, 0.32f, -0.29f, stroke)
-                c.drawLine(0f, 0.06f, 0.14f, -0.08f, stroke)
+                C(c, 0f, 0.06f, 0.33f, stroke)
+                L(c, -0.10f, -0.40f, 0.10f, -0.40f, stroke)
+                L(c, 0f, -0.40f, 0f, -0.27f, stroke)
+                L(c, 0.25f, -0.22f, 0.32f, -0.29f, stroke)
+                L(c, 0f, 0.06f, 0.14f, -0.08f, stroke)
             }
             Glyph.HOURGLASS -> { // песочные часы
-                c.drawLine(-0.26f, -0.40f, 0.26f, -0.40f, stroke)
-                c.drawLine(-0.26f, 0.40f, 0.26f, 0.40f, stroke)
+                L(c, -0.26f, -0.40f, 0.26f, -0.40f, stroke)
+                L(c, -0.26f, 0.40f, 0.26f, 0.40f, stroke)
                 path.rewind()
                 path.moveTo(-0.20f, -0.40f); path.lineTo(0.20f, -0.40f)
                 path.lineTo(0.03f, 0f); path.lineTo(0.20f, 0.40f)
                 path.lineTo(-0.20f, 0.40f); path.lineTo(-0.03f, 0f); path.close()
-                c.drawPath(path, stroke)
+                P(c, path, stroke)
                 path.rewind()
                 path.moveTo(-0.11f, 0.33f); path.lineTo(0.11f, 0.33f); path.lineTo(0f, 0.16f); path.close()
-                c.drawPath(path, fill)
+                P(c, path, fill)
             }
             Glyph.PLUS -> {
-                c.drawCircle(0f, 0f, 0.40f, stroke)
-                c.drawLine(-0.18f, 0f, 0.18f, 0f, stroke)
-                c.drawLine(0f, -0.18f, 0f, 0.18f, stroke)
+                C(c, 0f, 0f, 0.40f, stroke)
+                L(c, -0.18f, 0f, 0.18f, 0f, stroke)
+                L(c, 0f, -0.18f, 0f, 0.18f, stroke)
             }
             Glyph.EMPTY -> {
-                c.drawCircle(0f, 0f, 0.30f, stroke)
-                c.drawLine(-0.14f, 0f, 0.14f, 0f, stroke)
+                C(c, 0f, 0f, 0.30f, stroke)
+                L(c, -0.14f, 0f, 0.14f, 0f, stroke)
             }
         }
         c.restore()
@@ -273,7 +274,133 @@ object Glyphs {
 
     private fun rr(c: Canvas, l: Float, t: Float, rt: Float, b: Float, rad: Float, p: Paint) {
         r.set(l, t, rt, b)
-        c.drawRoundRect(r, rad, rad, p)
+        if (!boneMode) { c.drawRoundRect(r, rad, rad, p); return }
+        tmp.rewind()
+        tmp.addRoundRect(r, rad, rad, Path.Direction.CW)
+        if (p === fill) blob(c, tmp) else boneify(c, tmp)
+    }
+
+    // =====================================================================
+    // Режим «хромированные кости» (стиль «Хром»): каждая линия значка —
+    // цепочка костей с мыщелками, каждая заливка — хромовая шишка.
+    // =====================================================================
+
+    /** Включается стилем «Хром». */
+    var boneMode = false
+    private var curAlpha = 255
+    private val tmp = Path()
+    private val pm = android.graphics.PathMeasure()
+    private val p0 = FloatArray(2)
+    private val p1 = FloatArray(2)
+    private val boneRect = RectF()
+    private val boneMatrix = android.graphics.Matrix()
+    private val chromeLin = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = android.graphics.LinearGradient(0f, -0.5f, 0f, 0.5f,
+            intArrayOf(0xFFFFFFFF.toInt(), 0xFFB9BED8.toInt(), 0xFF555A76.toInt(), 0xFFF6F6FF.toInt(), 0xFF8C91B0.toInt(), 0xFF262940.toInt()),
+            floatArrayOf(0f, 0.2f, 0.45f, 0.56f, 0.8f, 1f), android.graphics.Shader.TileMode.CLAMP)
+    }
+    private val knob = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = android.graphics.RadialGradient(-0.35f, -0.4f, 1.3f,
+            intArrayOf(0xFFFFFFFF.toInt(), 0xFFAEB2CC.toInt(), 0xFF3A3D58.toInt()), floatArrayOf(0f, 0.45f, 1f),
+            android.graphics.Shader.TileMode.CLAMP)
+    }
+    private val blobShader = android.graphics.RadialGradient(-0.35f, -0.4f, 1.3f,
+        intArrayOf(0xFFFFFFFF.toInt(), 0xFFAEB2CC.toInt(), 0xFF3A3D58.toInt()), floatArrayOf(0f, 0.45f, 1f),
+        android.graphics.Shader.TileMode.CLAMP)
+    private val blobPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = blobShader }
+    private val shade = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(12, 6, 32) }
+    private val edge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.rgb(20, 10, 40) }
+
+    private fun L(c: Canvas, x0: Float, y0: Float, x1: Float, y1: Float, p: Paint) {
+        if (boneMode) bone(c, x0, y0, x1, y1) else c.drawLine(x0, y0, x1, y1, p)
+    }
+
+    private fun C(c: Canvas, x: Float, y: Float, rad: Float, p: Paint) {
+        if (!boneMode) { c.drawCircle(x, y, rad, p); return }
+        tmp.rewind()
+        tmp.addCircle(x, y, rad, Path.Direction.CW)
+        if (p === fill) blob(c, tmp) else boneify(c, tmp)
+    }
+
+    private fun P(c: Canvas, path: Path, p: Paint) {
+        if (!boneMode) { c.drawPath(path, p); return }
+        if (p === fill) blob(c, path) else boneify(c, path)
+    }
+
+    private fun A(c: Canvas, oval: RectF, start: Float, sweep: Float, useCenter: Boolean, p: Paint) {
+        if (!boneMode) { c.drawArc(oval, start, sweep, useCenter, p); return }
+        tmp.rewind()
+        tmp.addArc(oval, start, sweep)
+        boneify(c, tmp)
+    }
+
+    private fun O(c: Canvas, oval: RectF, p: Paint) {
+        if (!boneMode) { c.drawOval(oval, p); return }
+        tmp.rewind()
+        tmp.addOval(oval, Path.Direction.CW)
+        if (p === fill) blob(c, tmp) else boneify(c, tmp)
+    }
+
+    /** Разбивает контур на кости длиной ~0.17. */
+    private fun boneify(c: Canvas, path: Path) {
+        pm.setPath(path, false)
+        do {
+            val len = pm.length
+            if (len <= 0.0001f) continue
+            val n = max(1, kotlin.math.round(len / 0.17f).toInt())
+            for (i in 0 until n) {
+                pm.getPosTan(len * i / n, p0, null)
+                pm.getPosTan(len * (i + 1) / n, p1, null)
+                bone(c, p0[0], p0[1], p1[0], p1[1])
+            }
+        } while (pm.nextContour())
+    }
+
+    /** Одна хромированная кость: стержень и по два мыщелка на концах. */
+    private fun bone(c: Canvas, x0: Float, y0: Float, x1: Float, y1: Float) {
+        val dx = x1 - x0
+        val dy = y1 - y0
+        val len = kotlin.math.hypot(dx, dy)
+        if (len < 0.0005f) return
+        val t = 0.105f * weight
+        c.save()
+        c.translate(x0, y0)
+        c.rotate(Math.toDegrees(kotlin.math.atan2(dy, dx).toDouble()).toFloat())
+        // тень
+        shade.alpha = (curAlpha * 0.5f).toInt()
+        c.drawRect(0f, -t * 0.22f + t * 0.14f, len, t * 0.30f + t * 0.14f, shade)
+        // стержень
+        c.save()
+        c.scale(1f, t)
+        chromeLin.alpha = curAlpha
+        c.drawRect(t * 0.15f, -0.30f, len - t * 0.15f, 0.30f, chromeLin)
+        c.restore()
+        // мыщелки
+        knob.alpha = curAlpha
+        for (ex in 0..1) {
+            val x = if (ex == 0) 0f else len
+            for (sy in 0..1) {
+                c.save()
+                c.translate(x, (if (sy == 0) -1f else 1f) * t * 0.26f)
+                c.scale(t * 0.34f, t * 0.34f)
+                c.drawCircle(0f, 0f, 1f, knob)
+                c.restore()
+            }
+        }
+        c.restore()
+    }
+
+    /** Заливка как хромовая шишка. */
+    private fun blob(c: Canvas, path: Path) {
+        path.computeBounds(boneRect, true)
+        boneMatrix.setScale(max(boneRect.width(), 0.01f) / 2f, max(boneRect.height(), 0.01f) / 2f)
+        boneMatrix.postTranslate(boneRect.centerX(), boneRect.centerY())
+        blobShader.setLocalMatrix(boneMatrix)
+        blobPaint.alpha = curAlpha
+        c.drawPath(path, blobPaint)
+        edge.strokeWidth = 0.02f
+        edge.alpha = (curAlpha * 0.6f).toInt()
+        c.drawPath(path, edge)
     }
 }
 

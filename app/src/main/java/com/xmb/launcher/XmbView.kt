@@ -561,7 +561,7 @@ class XmbView(context: Context) : View(context) {
             if (cl > 0.05f) drawGlow(c, x, y, size * 1.15f, glowScale() * cl * 0.45f)
             val ga = (255 * lerp(0.6f, 1f, cl)).toInt()
             VisualStyles.drawFrame(c, bg.style, x, y, size * 0.85f, ga, cl, time)
-            Glyphs.draw(c, categories[i].glyph, x, y, size * (if (bg.style.frame == FrameKind.NONE) 0.85f else 0.62f), ga)
+            Glyphs.draw(c, categories[i].glyph, x, y, size * glyphScale(0.85f), ga)
             if (cl > 0.02f) {
                 catPaint.alpha = (255 * cl).toInt()
                 c.drawText(categories[i].title, x, y + size * 0.5f + unit * 0.045f, catPaint)
@@ -569,10 +569,17 @@ class XmbView(context: Context) : View(context) {
         }
     }
 
+    /** Размер значка: в рамках меньше, в «Хроме» (значки из костей) — крупнее. */
+    private fun glyphScale(base: Float) = when (bg.style.frame) {
+        FrameKind.NONE -> base
+        FrameKind.CHROME -> base * 1.12f
+        else -> base * 0.74f
+    }
+
     /** Сила общего свечения выбранного пункта: в стилях с рамками оно слабее. */
     private fun glowScale() = when (bg.style.frame) {
         FrameKind.NONE, FrameKind.GLOW -> 1f
-        FrameKind.BUBBLE -> 0.6f
+        FrameKind.BUBBLE, FrameKind.CHROME -> 0.6f
         else -> 0.35f
     }
 
@@ -593,7 +600,7 @@ class XmbView(context: Context) : View(context) {
             tmpRect.set(x - s, y - s, x + s, y + s)
             VisualStyles.drawAppIcon(c, st, bmp, tmpRect, alpha)
         } else {
-            Glyphs.draw(c, item.glyph ?: Glyph.EMPTY, x, y, size * (if (st.frame == FrameKind.NONE) 0.8f else 0.6f), alpha)
+            Glyphs.draw(c, item.glyph ?: Glyph.EMPTY, x, y, size * glyphScale(0.8f), alpha)
         }
     }
 
@@ -630,7 +637,7 @@ class XmbView(context: Context) : View(context) {
         if (a < 3) return
         val size = itemSize * 1.45f
         val tx = ix - size * 0.5f
-        val ty = iy + size * 0.5f + unit * (if (bg.style.frame == FrameKind.CHROME) 0.11f else 0.075f)
+        val ty = iy + size * 0.5f + unit * 0.075f
         val avail = width - safeR - tx - unit * 0.05f
         if (avail < 20f) return
         titlePaint.textSize = unit * 0.045f

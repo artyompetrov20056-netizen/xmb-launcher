@@ -126,6 +126,7 @@ class XmbBackground {
         style = s
         Glyphs.weight = s.weight
         Glyphs.tint = s.ink
+        Glyphs.boneMode = s.frame == FrameKind.CHROME
         updateTargets()
         if (!animate) snapColors()
     }
@@ -148,6 +149,7 @@ class XmbBackground {
         style = VisualStyles.current(context)
         Glyphs.weight = style.weight
         Glyphs.tint = style.ink
+        Glyphs.boneMode = style.frame == FrameKind.CHROME
         setTheme(XmbTheme.ALL[idx], animate = false)
     }
 
@@ -594,6 +596,8 @@ class XmbBackground {
         }
         stroke.color = Color.WHITE
 
+        drawSpine(c, w, h, unit, time)
+
         // рамка экрана из хромовых бусин, по ним бежит блеск
         val m = unit * 0.028f
         val br = unit * 0.011f
@@ -608,6 +612,58 @@ class XmbBackground {
             c.save(); c.translate(pxy[0], pxy[1]); c.scale(br, br); c.drawCircle(0f, 0f, 1f, beadPaint); c.restore()
             d += step
         }
+    }
+
+    private val boneShader = LinearGradient(0f, -0.5f, 0f, 0.5f,
+        intArrayOf(Color.WHITE, Color.rgb(185, 190, 216), Color.rgb(85, 90, 118), Color.rgb(246, 246, 255), Color.rgb(140, 145, 176), Color.rgb(38, 41, 64)),
+        floatArrayOf(0f, 0.2f, 0.45f, 0.56f, 0.8f, 1f), Shader.TileMode.CLAMP)
+    private val bonePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = boneShader }
+
+    /** Хромированный позвоночник с рёбрами, медленно извивается через весь экран. */
+    private fun drawSpine(c: Canvas, w: Float, h: Float, unit: Float, time: Float) {
+        val n = 30
+        val vw = unit * 0.075f
+        val vh = unit * 0.042f
+        for (i in 0 until n) {
+            val t = i / (n - 1f)
+            val y = h * (1.06f - t * 1.12f)
+            val ph = t * 2.2f * PI.toFloat() + time * 0.35f
+            val x = w * 0.30f + w * 0.16f * sin(ph)
+            // наклон по касательной
+            val dxdy = w * 0.16f * cos(ph) * (2.2f * PI.toFloat()) / (h * 1.12f)
+            val ang = Math.toDegrees(kotlin.math.atan(dxdy.toDouble())).toFloat()
+            c.save()
+            c.translate(x, y)
+            c.rotate(-ang)
+            bonePaint.alpha = 120
+            // рёбра
+            for (side in intArrayOf(-1, 1)) {
+                path.rewind()
+                path.moveTo(side * vw * 0.45f, -vh * 0.1f)
+                path.quadTo(side * vw * 1.6f, -vh * 1.6f, side * vw * 2.4f, vh * (0.4f + 0.3f * sin(time + i)))
+                stroke.color = Color.rgb(200, 204, 230)
+                stroke.strokeWidth = vh * 0.32f
+                stroke.alpha = 70
+                c.drawPath(path, stroke)
+            }
+            // позвонок
+            c.save()
+            c.scale(vw, vh)
+            c.drawRoundRect(-0.5f, -0.5f, 0.5f, 0.5f, 0.3f, 0.45f, bonePaint)
+            c.restore()
+            // шип назад
+            path.rewind()
+            path.moveTo(-vw * 0.12f, -vh * 0.4f)
+            path.lineTo(0f, -vh * 1.5f)
+            path.lineTo(vw * 0.12f, -vh * 0.4f)
+            path.close()
+            fill.color = Color.rgb(220, 222, 240)
+            fill.alpha = 110
+            c.drawPath(path, fill)
+            c.restore()
+        }
+        stroke.color = Color.WHITE
+        fill.color = Color.WHITE
     }
 
     private val ppt = FloatArray(2)

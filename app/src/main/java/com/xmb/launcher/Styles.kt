@@ -178,54 +178,12 @@ object VisualStyles {
     }
     private val hornPath = android.graphics.Path()
 
+    /** Хром: никакой рамки — значок сам собран из костей; у выбранного только мягкий отблеск. */
     private fun drawChromeFrame(c: Canvas, cx: Float, cy: Float, size: Float, a: Float, sel: Float, time: Float) {
-        val R = size * 0.66f
-        val al = (255 * a).toInt()
-        c.save()
-        c.translate(cx, cy)
-        // позвонки по кругу
-        val n = 14
-        val segW = size * 0.15f
-        val segH = size * 0.10f
-        chrome.alpha = al
-        chromeOutline.alpha = (150 * a).toInt()
-        for (i in 0 until n) {
-            c.save()
-            c.rotate(i * 360f / n + sel * time * 12f)
-            c.translate(0f, -R)
-            c.scale(segW, segH)
-            r.set(-0.5f, -0.5f, 0.5f, 0.5f)
-            c.drawRoundRect(r, 0.35f, 0.45f, chrome)
-            chromeOutline.strokeWidth = 0.06f
-            c.drawRoundRect(r, 0.35f, 0.45f, chromeOutline)
-            c.restore()
-        }
-        // рожки сверху
-        for (side in intArrayOf(-1, 1)) {
-            c.save()
-            c.scale(side.toFloat() * R, R)
-            hornPath.rewind()
-            hornPath.moveTo(0.22f, -0.92f)
-            hornPath.quadTo(0.75f, -1.25f, 0.62f, -1.75f)
-            hornPath.quadTo(0.52f, -1.30f, 0.40f, -0.98f)
-            hornPath.close()
-            c.drawPath(hornPath, chrome)
-            c.restore()
-        }
-        // камень снизу
-        val jr = size * 0.085f
-        jewel.alpha = al
-        c.save(); c.translate(0f, R + jr * 0.4f); c.scale(jr, jr); c.drawCircle(0f, 0f, 1f, jewel); c.restore()
-        fill.alpha = (200 * a).toInt()
-        c.drawCircle(-jr * 0.35f, R + jr * 0.05f, jr * 0.25f, fill)
-        // блеск, пробегающий по выбранному кольцу
-        if (sel > 0.05f) {
-            line.strokeWidth = size * 0.035f
-            line.alpha = (180 * a * sel * (0.5f + 0.5f * kotlin.math.sin(time * 2.5f))).toInt()
-            r.set(-R, -R, R, R)
-            c.drawArc(r, (time * 120f) % 360f, 40f, false, line)
-        }
-        c.restore()
+        if (sel <= 0.05f) return
+        glow.alpha = (255 * a * sel * (0.30f + 0.08f * kotlin.math.sin(time * 2.5f))).toInt()
+        c.save(); c.translate(cx, cy); c.scale(size * 0.9f, size * 0.9f)
+        c.drawCircle(0f, 0f, 1f, glow); c.restore()
     }
 
     // ---------------- Веб-кор: HUD-уголки и бегущий ползунок ----------------
