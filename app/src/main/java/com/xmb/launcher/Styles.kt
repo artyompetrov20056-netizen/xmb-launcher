@@ -11,6 +11,7 @@ import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
 import java.util.WeakHashMap
+import kotlin.math.max
 
 /** Оформление иконок в стиле. */
 enum class FrameKind { NONE, BUBBLE, BEVEL, SQUARE, GLOW, ROUNDED, CARD, CHROME, HUD, PEBBLE, CRYSTAL }
