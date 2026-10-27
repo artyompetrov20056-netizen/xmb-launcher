@@ -128,9 +128,9 @@ class XmbView(context: Context) : View(context) {
     // ---------- волны и искры ----------
     private val waveTop = Array(3) { Path() }
     private val waveBand = Array(3) { Path() }
-    private val waveSegs = 48
+    private val waveSegs = 72
     private val waveYs = FloatArray(waveSegs + 1)
-    private val sparkN = 48
+    private val sparkN = 70
     private val rnd = Random(7)
     private val sparkX = FloatArray(sparkN) { rnd.nextFloat() }
     private val sparkY = FloatArray(sparkN) { rnd.nextFloat() - 0.5f }
@@ -143,7 +143,8 @@ class XmbView(context: Context) : View(context) {
 
     // ---------- касания ----------
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
-    private val longPressMs = ViewConfiguration.getLongPressTimeout().toLong()
+    /** Удержание 1,1 секунды открывает меню приложения. */
+    private val longPressMs = 1100L
     private var downX = 0f
     private var downY = 0f
     private var dragAxis = AXIS_NONE
@@ -158,10 +159,25 @@ class XmbView(context: Context) : View(context) {
         val hit = hitItem(downX, downY)
         if (hit >= 0) {
             categories.getOrNull(ci)?.items?.getOrNull(hit)?.let {
-                performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                if (it.key != null) performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                 listener?.onItemLongPress(it)
             }
         }
+    }
+
+    // ---------- окна, звук, переливающаяся тема ----------
+    var sounds: XmbSounds? = null
+    private var overlay: Overlay? = null
+    private val frame = Frame()
+    private var autoTheme = false
+    private var lastCatIdx = Int.MIN_VALUE
+    private var lastItemKey = Int.MIN_VALUE
+
+    private val overlayHost = object : OverlayHost {
+        override fun closeOverlay() = this@XmbView.closeOverlay()
+        override fun playTick() { sounds?.tick() }
+        override fun playOk() { sounds?.ok() }
+        override fun playBack() { sounds?.back() }
     }
 
     init {
@@ -193,6 +209,34 @@ class XmbView(context: Context) : View(context) {
         if (oldCatId == null) catPos = newCat.toFloat()
         catTarget = newCat
         cancelDrag()
+        lastCatIdx = Int.MIN_VALUE
+        lastItemKey = Int.MIN_VALUE
+        invalidate()
+    }
+
+    /** Режим «Переливающийся»: раз в 2 минуты фон плавно (1 минуту) переходит к следующему цвету. */
+    fun setAutoTheme(on: Boolean) {
+        autoTheme = on
+        invalidate()
+    }
+
+    fun showOverlay(o: Overlay) {
+        removeCallbacks(longPressRunnable)
+        cancelDrag()
+        o.host = overlayHost
+        overlay = o
+        invalidate()
+    }
+
+    fun closeOverlay() {
+        overlay = null
+        invalidate()
+    }
+
+    /** Кнопка «Назад»: закрыть окно, если открыто, иначе вернуться к первому пункту. */
+    fun onBack() {
+        val o = overlay
+        if (o != null) o.onBack() else goToFirstItem()
         invalidate()
     }
 
@@ -254,12 +298,16 @@ class XmbView(context: Context) : View(context) {
 
         drawBackground(c)
         drawWaves(c)
-        drawSparkles(c)
         if (categories.isNotEmpty()) {
             drawItems(c)
             drawCategories(c)
         }
         drawClock(c)
+
+        frame.w = width.toFloat(); frame.h = height.toFloat(); frame.unit = unit
+        frame.l = safeL; frame.t = safeT; frame.r = safeR; frame.b = safeB
+        frame.portrait = height > width
+        overlay?.draw(c, frame, time)
 
         // Пока что-то двигается — 60 кадров/с, в покое — только волны ~30 кадров/с
         if (moving) postInvalidateOnAnimation() else postInvalidateDelayed(33)
@@ -292,6 +340,7 @@ class XmbView(context: Context) : View(context) {
         val od = want - orient
         if (abs(od) > 0.001f) { orient += od * (1f - exp(-dt * 8f)); moving = true } else orient = want
 
+        if (autoTheme) applyAutoColors()
         val kc = 1f - exp(-dt * 3f)
         for (i in 0 until 3) for (ch in 0 until 3) {
             val idx = i * 3 + ch
@@ -300,8 +349,46 @@ class XmbView(context: Context) : View(context) {
         }
 
         if (flash > 0f) { flash = max(0f, flash - dt * 3f); moving = true }
+
+        overlay?.let {
+            if (it.fade < 0.999f) { it.fade += (1f - it.fade) * (1f - exp(-dt * 12f)); moving = true } else it.fade = 1f
+        }
+
+        // Щелчок при переходе на соседнюю категорию или пункт — как на PS3
+        if (categories.isNotEmpty()) {
+            val cIdx = catPos.roundToInt()
+            val ci = currentCat()
+            val itemKey = ci * 100000 + itemPos[ci].roundToInt()
+            if ((lastCatIdx != Int.MIN_VALUE && cIdx != lastCatIdx) ||
+                (lastItemKey != Int.MIN_VALUE && itemKey != lastItemKey)
+            ) sounds?.tick()
+            lastCatIdx = cIdx
+            lastItemKey = itemKey
+        }
         return moving
     }
+
+    private fun applyAutoColors() {
+        val list = XmbTheme.CYCLE
+        val period = 120_000L
+        val now = System.currentTimeMillis()
+        val idx = now / period
+        val sec = (now % period) / 1000f
+        val n = list.size
+        val from = list[(((idx - 1) % n + n) % n).toInt()]
+        val to = list[(idx % n).toInt()]
+        val x = (sec / 60f).coerceIn(0f, 1f)
+        val f = x * x * (3f - 2f * x)
+        targetColors[0] = lerpColor(from.top, to.top, f)
+        targetColors[1] = lerpColor(from.mid, to.mid, f)
+        targetColors[2] = lerpColor(from.bottom, to.bottom, f)
+    }
+
+    private fun lerpColor(a: Int, b: Int, f: Float) = Color.rgb(
+        (Color.red(a) + (Color.red(b) - Color.red(a)) * f).toInt(),
+        (Color.green(a) + (Color.green(b) - Color.green(a)) * f).toInt(),
+        (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * f).toInt(),
+    )
 
     private fun updateMetrics() {
         val w = width.toFloat()
@@ -339,30 +426,44 @@ class XmbView(context: Context) : View(context) {
         c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
     }
 
-    private fun waveBase() = height * lerp(0.60f, 0.52f, orient)
-
+    /**
+     * Волны и искры рисуются в своей системе координат:
+     * горизонтально — поперёк экрана, как на PS3;
+     * вертикально — вдоль длинной стороны экрана, наклонены примерно на 20° от вертикали
+     * (снизу-слева вверх-вправо) и не сплюснуты. При повороте наклон меняется плавно.
+     */
     private fun drawWaves(c: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
-        if (w <= 0f) return
-        val base = waveBase()
+        if (w <= 0f || h <= 0f) return
+        val cross = lerp(h, w, orient)          // ширина «полосы», в которой гуляют волны
+        val len = lerp(w, h, orient)            // длина экрана вдоль волн — задаёт число изгибов
+        val span = hypot(w, h) * 1.15f          // рисуем с запасом, чтобы концы не были видны
+        val ampScale = lerp(1f, 1.7f, orient)
+        val cx = w * 0.5f
+        val cy = lerp(h * 0.60f, h * 0.50f, orient)
+
+        c.save()
+        c.translate(cx, cy)
+        c.rotate(-70f * orient)
+
         linePaint.strokeWidth = max(1.5f, unit * 0.0025f)
         for (k in 0 until 3) {
             val top = waveTop[k]
             val band = waveBand[k]
             top.rewind(); band.rewind()
-            val amp = h * (0.045f + 0.018f * k) * lerp(1f, 0.55f, orient)
-            val f1 = (1.1f + 0.4f * k) * 2f * PI.toFloat() / w
+            val amp = cross * (0.045f + 0.018f * k) * ampScale
+            val f1 = (1.1f + 0.4f * k) * 2f * PI.toFloat() / len
             val ph = time * (0.22f + 0.07f * k) + k * 1.9f
             for (s in 0..waveSegs) {
-                val x = w * s / waveSegs
-                val y = base + k * h * 0.012f + amp * sin(x * f1 + ph) + amp * 0.35f * sin(x * f1 * 0.47f - ph * 1.4f)
+                val x = -span / 2f + span * s / waveSegs
+                val y = k * cross * 0.012f + amp * sin(x * f1 + ph) + amp * 0.35f * sin(x * f1 * 0.47f - ph * 1.4f)
                 waveYs[s] = y
                 if (s == 0) { top.moveTo(x, y); band.moveTo(x, y) } else { top.lineTo(x, y); band.lineTo(x, y) }
             }
             for (s in waveSegs downTo 0) {
-                val x = w * s / waveSegs
-                val th = h * 0.022f * (1.2f + sin(x * f1 * 0.8f + ph * 0.7f + k))
+                val x = -span / 2f + span * s / waveSegs
+                val th = cross * 0.022f * ampScale * (1.2f + sin(x * f1 * 0.8f + ph * 0.7f + k))
                 band.lineTo(x, waveYs[s] + th)
             }
             band.close()
@@ -371,19 +472,16 @@ class XmbView(context: Context) : View(context) {
             linePaint.alpha = 80 - k * 18
             c.drawPath(top, linePaint)
         }
-    }
 
-    private fun drawSparkles(c: Canvas) {
-        val w = width.toFloat()
-        val h = height.toFloat()
-        val base = waveBase()
+        // Искры вокруг волн
         for (i in 0 until sparkN) {
-            val x = ((sparkX[i] + time * sparkSpeed[i]) % 1f) * w
-            val y = base + sparkY[i] * h * 0.30f
+            val x = ((sparkX[i] + time * sparkSpeed[i]) % 1f) * span - span / 2f
+            val y = sparkY[i] * cross * 0.30f * ampScale
             val a = 0.5f + 0.5f * sin(time * 2.2f + sparkPhase[i])
             sparkPaint.alpha = (25 + 120 * a).toInt()
             c.drawCircle(x, y, unit * (0.0015f + 0.0012f * (i % 3)), sparkPaint)
         }
+        c.restore()
     }
 
     private fun drawItems(c: Canvas) {
@@ -546,6 +644,11 @@ class XmbView(context: Context) : View(context) {
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        overlay?.let {
+            it.onTouch(e, frame)
+            invalidate()
+            return true
+        }
         if (categories.isEmpty()) return true
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -676,7 +779,12 @@ class XmbView(context: Context) : View(context) {
         }
         for (i in categories.indices) {
             if (hypot(x - catX(i), y - catY(i)) < catSize * 0.8f) {
-                selectCategory(i)
+                val c = categories[i]
+                if (i == catTarget && abs(catPos - i) < 0.3f && c.tapOpens && c.items.isNotEmpty()) {
+                    activate(c.items[0])
+                } else {
+                    selectCategory(i)
+                }
                 return
             }
         }
@@ -684,6 +792,7 @@ class XmbView(context: Context) : View(context) {
 
     private fun activate(item: XmbItem) {
         flash = 1f
+        if (item.onClick != null) sounds?.ok()
         listener?.onItemActivated(item)
         invalidate()
     }
@@ -700,6 +809,11 @@ class XmbView(context: Context) : View(context) {
     // =====================================================================
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        overlay?.let {
+            val handled = it.onKey(keyCode, event)
+            invalidate()
+            return handled || super.onKeyDown(keyCode, event)
+        }
         if (categories.isEmpty()) return super.onKeyDown(keyCode, event)
         val p = portraitNow()
         when (keyCode) {

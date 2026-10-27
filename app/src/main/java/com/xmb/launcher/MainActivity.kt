@@ -3,7 +3,9 @@ package com.xmb.launcher
 import android.app.Activity
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherApps
+import android.content.pm.ResolveInfo
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -22,9 +24,13 @@ class MainActivity : Activity(), XmbView.Listener {
 
     private lateinit var xmb: XmbView
     private lateinit var prefs: SharedPreferences
+    private lateinit var sounds: XmbSounds
     private var themeIndex = 0
+    private var autoTheme = false
     private var themeItem: XmbItem? = null
+    private var soundItem: XmbItem? = null
     private var apps: List<AppEntry>? = null
+    private val favorites = LinkedHashSet<String>()
     private var loadGeneration = 0
     private val handler = Handler(Looper.getMainLooper())
     private val reloadRunnable = Runnable { reloadApps() }
@@ -44,10 +50,17 @@ class MainActivity : Activity(), XmbView.Listener {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences("xmb", MODE_PRIVATE)
         themeIndex = prefs.getInt(PREF_THEME, 0).coerceIn(0, XmbTheme.ALL.lastIndex)
+        autoTheme = prefs.getBoolean(PREF_THEME_AUTO, false)
+        prefs.getString(PREF_FAVORITES, "")!!.split('\n').filter { it.isNotBlank() }.forEach { favorites += it }
+
+        sounds = XmbSounds(this)
+        sounds.enabled = prefs.getBoolean(PREF_SOUND, true)
 
         xmb = XmbView(this)
         xmb.listener = this
+        xmb.sounds = sounds
         xmb.setTheme(XmbTheme.ALL[themeIndex], animate = false)
+        xmb.setAutoTheme(autoTheme)
         xmb.initialCategoryId = prefs.getString(PREF_CATEGORY, "game")
         xmb.setOnApplyWindowInsetsListener { _, insets ->
             xmb.applyInsets(insets)
@@ -66,6 +79,7 @@ class MainActivity : Activity(), XmbView.Listener {
     override fun onDestroy() {
         try { launcherApps.unregisterCallback(appsCallback) } catch (_: Exception) { }
         handler.removeCallbacks(reloadRunnable)
+        sounds.release()
         super.onDestroy()
     }
 
@@ -74,16 +88,17 @@ class MainActivity : Activity(), XmbView.Listener {
         if (hasFocus) setupWindow()
     }
 
-    /** Нажали «Домой», уже находясь на рабочем столе — возвращаемся к началу списка. */
+    /** Нажали «Домой», уже находясь на рабочем столе — закрываем окна и возвращаемся к началу списка. */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        xmb.closeOverlay()
         xmb.goToFirstItem()
     }
 
-    /** «Назад» на рабочем столе ничего не закрывает, только возвращает к первому пункту. */
+    /** «Назад» закрывает открытое окно, иначе возвращает к первому пункту. */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.keyCode == KeyEvent.KEYCODE_BACK) {
-            if (event.action == KeyEvent.ACTION_UP) xmb.goToFirstItem()
+            if (event.action == KeyEvent.ACTION_UP) xmb.onBack()
             return true
         }
         return super.dispatchKeyEvent(event)
@@ -111,7 +126,7 @@ class MainActivity : Activity(), XmbView.Listener {
     }
 
     // =====================================================================
-    // Список приложений
+    // Список приложений и категории
     // =====================================================================
 
     private fun scheduleReload() {
@@ -126,11 +141,15 @@ class MainActivity : Activity(), XmbView.Listener {
             runOnUiThread {
                 if (gen == loadGeneration && !isDestroyed) {
                     apps = loaded
-                    xmb.setCategories(buildCategories())
+                    refreshMenu()
                 }
             }
         }.start()
     }
+
+    private fun refreshMenu() = xmb.setCategories(buildCategories())
+
+    private fun themeName() = if (autoTheme) XmbTheme.AUTO_NAME else XmbTheme.ALL[themeIndex].name
 
     private fun buildCategories(): List<XmbCategory> {
         val list = apps
@@ -141,11 +160,18 @@ class MainActivity : Activity(), XmbView.Listener {
         }
 
         val theme = XmbItem(
-            "Цвет темы", "Сейчас: ${XmbTheme.ALL[themeIndex].name} · нажмите, чтобы сменить",
+            "Цвет темы", "Сейчас: ${themeName()}",
             glyph = Glyph.PALETTE,
-            onClick = { it.cycleTheme() }
+            onClick = { it.openThemePicker() }
         )
         themeItem = theme
+
+        val sound = XmbItem(
+            "Звук меню", soundSubtitle(),
+            glyph = Glyph.SOUND,
+            onClick = { it.toggleSound() }
+        )
+        soundItem = sound
 
         val settings = listOf(
             settingsItem("Сеть Wi‑Fi", "Подключение к беспроводным сетям", Glyph.WIFI,
@@ -154,14 +180,35 @@ class MainActivity : Activity(), XmbView.Listener {
                 Intent(Settings.ACTION_BLUETOOTH_SETTINGS)),
             settingsItem("Экран", "Яркость, автоповорот, размер шрифта", Glyph.DISPLAY,
                 Intent(Settings.ACTION_DISPLAY_SETTINGS)),
-            settingsItem("Звук", "Громкость и мелодии", Glyph.SOUND,
+            settingsItem("Громкость", "Громкость и мелодии телефона", Glyph.SOUND,
                 Intent(Settings.ACTION_SOUND_SETTINGS)),
             theme,
-            settingsItem("Рабочий стол по умолчанию", "Вернуть стандартный рабочий стол", Glyph.HOME,
+            sound,
+            settingsItem("Рабочий стол по умолчанию", "Выбрать, какой рабочий стол открывается кнопкой «Домой»", Glyph.HOME,
                 Intent(Settings.ACTION_HOME_SETTINGS),
                 Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)),
             settingsItem("Все настройки", "Системные настройки Android", Glyph.GEAR,
                 Intent(Settings.ACTION_SETTINGS)),
+        )
+
+        val favItems: List<XmbItem> = when (list) {
+            null -> listOf(XmbItem("Загрузка…", glyph = Glyph.EMPTY))
+            else -> {
+                val byKey = list.associateBy { it.component.flattenToString() }
+                favorites.mapNotNull { byKey[it] }.map { appItem(it) }.ifEmpty {
+                    listOf(XmbItem("Пока пусто", "Удерживайте приложение 1 секунду и выберите «Добавить в избранное»", glyph = Glyph.EMPTY))
+                }
+            }
+        }
+
+        val search = listOf(
+            XmbItem("Найти приложение", "Поиск по названию с экранной клавиатурой", Glyph.SEARCH,
+                onClick = { it.openSearch() })
+        )
+
+        val exit = listOf(
+            XmbItem("Выйти в обычный рабочий стол", "Открыть стандартный рабочий стол телефона", Glyph.HOME,
+                onClick = { it.confirmExit() })
         )
 
         return listOf(
@@ -172,6 +219,9 @@ class MainActivity : Activity(), XmbView.Listener {
             XmbCategory("game", "Игры", Glyph.GAME, appsOf { Kind.GAME in it.kinds }),
             XmbCategory("network", "Сеть", Glyph.NETWORK, appsOf { Kind.NETWORK in it.kinds }),
             XmbCategory("apps", "Приложения", Glyph.APPS, appsOf { true }),
+            XmbCategory("favorites", "Избранное", Glyph.FAVORITE, favItems),
+            XmbCategory("search", "Поиск", Glyph.SEARCH, search, tapOpens = true),
+            XmbCategory("exit", "Выход", Glyph.HOME, exit, tapOpens = true),
         )
     }
 
@@ -179,6 +229,7 @@ class MainActivity : Activity(), XmbView.Listener {
         title = e.label,
         icon = e.icon,
         packageName = e.component.packageName,
+        key = e.component.flattenToString(),
         onClick = { act ->
             val intent = Intent(Intent.ACTION_MAIN)
                 .addCategory(Intent.CATEGORY_LAUNCHER)
@@ -209,21 +260,105 @@ class MainActivity : Activity(), XmbView.Listener {
         return false
     }
 
-    fun cycleTheme() {
-        themeIndex = (themeIndex + 1) % XmbTheme.ALL.size
-        prefs.edit().putInt(PREF_THEME, themeIndex).apply()
-        xmb.setTheme(XmbTheme.ALL[themeIndex], animate = true)
-        themeItem?.subtitle = "Сейчас: ${XmbTheme.ALL[themeIndex].name} · нажмите, чтобы сменить"
+    /** Выбор цвета темы, включая «Переливающийся». */
+    fun openThemePicker() {
+        val names = XmbTheme.ALL.map { it.name } + "${XmbTheme.AUTO_NAME} — новый цвет каждые 2 минуты"
+        val current = if (autoTheme) names.lastIndex else themeIndex
+        xmb.showOverlay(DialogOverlay("Цвет темы", null, names, selected = current, checked = current) { pick ->
+            if (pick == names.lastIndex) {
+                autoTheme = true
+            } else {
+                autoTheme = false
+                themeIndex = pick
+                xmb.setTheme(XmbTheme.ALL[pick], animate = true)
+            }
+            xmb.setAutoTheme(autoTheme)
+            prefs.edit().putInt(PREF_THEME, themeIndex).putBoolean(PREF_THEME_AUTO, autoTheme).apply()
+            themeItem?.subtitle = "Сейчас: ${themeName()}"
+        })
+    }
+
+    private fun soundSubtitle() = if (sounds.enabled) "Включён · нажмите, чтобы выключить" else "Выключен · нажмите, чтобы включить"
+
+    fun toggleSound() {
+        sounds.enabled = !sounds.enabled
+        prefs.edit().putBoolean(PREF_SOUND, sounds.enabled).apply()
+        if (sounds.enabled) sounds.ok()
+        soundItem?.subtitle = soundSubtitle()
+    }
+
+    fun openSearch() {
+        val all = apps?.map { appItem(it) } ?: emptyList()
+        xmb.showOverlay(SearchOverlay(all) { item -> item.onClick?.invoke(this) })
+    }
+
+    fun confirmExit() {
+        xmb.showOverlay(
+            DialogOverlay(
+                "Выход", "Действительно хотите выйти в обычный рабочий стол?",
+                listOf("Да", "Нет"), selected = 1
+            ) { pick -> if (pick == 0) exitToStockHome() }
+        )
+    }
+
+    /** Открывает стандартный рабочий стол телефона (системный лаунчер). */
+    private fun exitToStockHome() {
+        @Suppress("DEPRECATION")
+        val homes = packageManager.queryIntentActivities(
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0
+        ).filter {
+            val ai = it.activityInfo
+            ai != null && ai.packageName != packageName && !ai.name.contains("FallbackHome")
+        }
+        val pick = homes.maxWithOrNull(
+            compareBy<ResolveInfo>(
+                { if ((it.activityInfo.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0) 1 else 0 },
+                { it.priority }
+            )
+        )
+        if (pick == null) {
+            startSafe(Intent(Settings.ACTION_HOME_SETTINGS), Intent(Settings.ACTION_SETTINGS))
+            return
+        }
+        startSafe(
+            Intent(Intent.ACTION_MAIN)
+                .addCategory(Intent.CATEGORY_HOME)
+                .setClassName(pick.activityInfo.packageName, pick.activityInfo.name)
+        )
     }
 
     override fun onItemActivated(item: XmbItem) {
         item.onClick?.invoke(this)
     }
 
-    /** Долгое нажатие на приложение — его системная страница (там же «Удалить»). */
+    /** Удержание приложения — меню: избранное / удалить. */
     override fun onItemLongPress(item: XmbItem) {
+        val key = item.key ?: return
         val pkg = item.packageName ?: return
-        startSafe(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg")))
+        val isFav = key in favorites
+        xmb.showOverlay(
+            DialogOverlay(
+                item.title, null,
+                listOf(if (isFav) "Убрать из избранного" else "Добавить в избранное", "Удалить приложение")
+            ) { pick ->
+                when (pick) {
+                    0 -> {
+                        if (isFav) favorites.remove(key) else favorites.add(key)
+                        prefs.edit().putString(PREF_FAVORITES, favorites.joinToString("\n")).apply()
+                        Toast.makeText(
+                            this,
+                            if (isFav) "Убрано из избранного" else "Добавлено в избранное",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        refreshMenu()
+                    }
+                    1 -> startSafe(
+                        Intent(Intent.ACTION_DELETE, Uri.parse("package:$pkg")),
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg"))
+                    )
+                }
+            }
+        )
     }
 
     override fun onCategorySelected(category: XmbCategory) {
@@ -232,6 +367,9 @@ class MainActivity : Activity(), XmbView.Listener {
 
     companion object {
         private const val PREF_THEME = "theme"
+        private const val PREF_THEME_AUTO = "theme_auto"
         private const val PREF_CATEGORY = "category"
+        private const val PREF_SOUND = "sound"
+        private const val PREF_FAVORITES = "favorites"
     }
 }

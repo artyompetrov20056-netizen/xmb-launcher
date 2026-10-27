@@ -10,6 +10,8 @@ class XmbItem(
     val glyph: Glyph? = null,
     val icon: Bitmap? = null,
     val packageName: String? = null,
+    /** Уникальный ключ приложения (пакет/активность) — для избранного. */
+    val key: String? = null,
     val onClick: ((MainActivity) -> Unit)? = null,
 )
 
@@ -19,9 +21,11 @@ class XmbCategory(
     val title: String,
     val glyph: Glyph,
     val items: List<XmbItem>,
+    /** Нажатие на саму иконку категории сразу открывает её первый пункт (Поиск, Выход). */
+    val tapOpens: Boolean = false,
 )
 
-/** Цветовая тема фона, как в PS3 (меняется в «Настройки → Цвет темы»). */
+/** Цветовая тема фона, как в PS3. */
 class XmbTheme(val name: String, val top: Int, val mid: Int, val bottom: Int) {
     companion object {
         private fun c(v: Long) = v.toInt()
@@ -37,6 +41,11 @@ class XmbTheme(val name: String, val top: Int, val mid: Int, val bottom: Int) {
             XmbTheme("Золотой", c(0xFF2E2404), c(0xFFC9A63A), c(0xFF3A2E08)),
             XmbTheme("Тёмный", c(0xFF040507), c(0xFF2B2F37), c(0xFF0A0B0F)),
         )
+
+        /** Порядок цветов для режима «Переливающийся» (без тёмной темы). */
+        val CYCLE = ALL.filter { it.name != "Тёмный" }
+
+        const val AUTO_NAME = "Переливающийся"
 
         fun previewColor(i: Int) = ALL[i % ALL.size].mid or Color.BLACK
     }

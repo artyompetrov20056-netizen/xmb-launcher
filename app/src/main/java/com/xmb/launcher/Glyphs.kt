@@ -11,7 +11,8 @@ import kotlin.math.sin
 
 enum class Glyph {
     SETTINGS, PHOTO, MUSIC, VIDEO, GAME, NETWORK, APPS,
-    WIFI, BLUETOOTH, DISPLAY, SOUND, PALETTE, HOME, GEAR, INFO, EMPTY
+    WIFI, BLUETOOTH, DISPLAY, SOUND, PALETTE, HOME, GEAR, INFO, EMPTY,
+    FAVORITE, SEARCH
 }
 
 /**
@@ -170,6 +171,19 @@ object Glyphs {
                 c.drawCircle(0f, 0f, 0.40f, stroke)
                 c.drawCircle(0f, -0.18f, 0.05f, fill)
                 c.drawLine(0f, -0.04f, 0f, 0.22f, stroke)
+            }
+            Glyph.FAVORITE -> { // сердце
+                path.rewind()
+                path.moveTo(0f, 0.36f)
+                path.cubicTo(-0.56f, 0.02f, -0.42f, -0.44f, 0f, -0.18f)
+                path.cubicTo(0.42f, -0.44f, 0.56f, 0.02f, 0f, 0.36f)
+                path.close()
+                c.drawPath(path, stroke)
+            }
+            Glyph.SEARCH -> { // лупа
+                c.drawCircle(-0.08f, -0.08f, 0.25f, stroke)
+                stroke.strokeWidth = 0.11f
+                c.drawLine(0.11f, 0.11f, 0.38f, 0.38f, stroke)
             }
             Glyph.EMPTY -> {
                 c.drawCircle(0f, 0f, 0.30f, stroke)
