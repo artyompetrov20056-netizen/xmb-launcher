@@ -56,7 +56,7 @@ class MainActivity : Activity(), XmbView.Listener {
 
         // Кнопки громкости на рабочем столе регулируют медиа — через этот поток идут звуки меню
         volumeControlStream = android.media.AudioManager.STREAM_MUSIC
-        sounds = XmbSounds(this)
+        sounds = XmbSounds()
         sounds.level = prefs.getInt(PREF_SOUND_LEVEL, if (prefs.getBoolean(PREF_SOUND, true)) 2 else 0)
 
         xmb = XmbView(this)
@@ -84,6 +84,16 @@ class MainActivity : Activity(), XmbView.Listener {
         handler.removeCallbacks(reloadRunnable)
         sounds.release()
         super.onDestroy()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        sounds.start()
+    }
+
+    override fun onPause() {
+        sounds.stopSoon()
+        super.onPause()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

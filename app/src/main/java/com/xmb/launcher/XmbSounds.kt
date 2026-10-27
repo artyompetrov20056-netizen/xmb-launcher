@@ -1,67 +1,136 @@
 package com.xmb.launcher
 
-import android.content.Context
 import android.media.AudioAttributes
-import android.media.SoundPool
-import java.io.File
-import java.io.FileOutputStream
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.util.Collections
+import android.media.AudioFormat
+import android.media.AudioTrack
+import android.os.Handler
+import android.os.Looper
+import android.os.Process
 import java.util.Random
 import kotlin.math.PI
 import kotlin.math.exp
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sin
 
 /**
- * Звуковое оформление меню в духе PS3. Все звуки синтезируются в коде при запуске
- * (никаких записей из PS3) и проигрываются через SoundPool без задержки.
+ * Звуковое оформление меню в духе PS3. Все звуки синтезируются в коде
+ * (никаких записей из PS3).
+ *
+ * Пока рабочий стол открыт, держим аудиоканал открытым и непрерывно пишем в него тишину,
+ * подмешивая звуки меню. Иначе Bluetooth-наушники «засыпают» и короткие щелчки
+ * (30–200 мс) теряются целиком, пока канал просыпается.
  */
-class XmbSounds(context: Context) {
+class XmbSounds {
 
     /** Громкость: 0 — выключен, 1 — минимальная, 2 — средняя, 3 — высокая. */
     var level = 2
         set(v) { field = v.coerceIn(0, LEVELS.lastIndex) }
 
-    private val pool = SoundPool.Builder()
-        .setMaxStreams(6)
-        .setAudioAttributes(
-            AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_GAME)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build()
-        )
-        .build()
+    private val rate = 44100
+    private val noise = Random(3)
 
-    private val loaded: MutableSet<Int> = Collections.synchronizedSet(HashSet())
-    private var tickId = 0
-    private var okId = 0
-    private var backId = 0
-    private var keyId = 0
-    private var holdId = 0
-    private var launchId = 0
+    private val tickClip = synthTick()
+    private val okClip = synthOk()
+    private val backClip = synthBack()
+    private val keyClip = synthKey()
+    private val holdClip = synthHold()
+    private val launchClip = synthLaunch()
+
+    private class Voice(val data: FloatArray, val vol: Float) { var pos = 0 }
+
+    private val voices = ArrayList<Voice>()
+    @Volatile private var running = false
+    @Volatile private var generation = 0
+    private val handler = Handler(Looper.getMainLooper())
+    private val stopRunnable = Runnable { running = false }
+
     private var lastTick = 0L
     private var lastKey = 0L
 
-    init {
-        pool.setOnLoadCompleteListener { _, id, status -> if (status == 0) loaded.add(id) }
-        try {
-            tickId = load(context, "xmb_tick.wav", synthTick())
-            okId = load(context, "xmb_ok.wav", synthOk())
-            backId = load(context, "xmb_back.wav", synthBack())
-            keyId = load(context, "xmb_key.wav", synthKey())
-            holdId = load(context, "xmb_hold.wav", synthHold())
-            launchId = load(context, "xmb_launch.wav", synthLaunch())
+    // ---------------- управление каналом ----------------
+
+    /** Рабочий стол на экране — открываем канал. */
+    fun start() {
+        handler.removeCallbacks(stopRunnable)
+        if (running || level == 0) return
+        running = true
+        val gen = ++generation
+        Thread({ loop(gen) }, "xmb-audio").start()
+    }
+
+    /** Ушли с рабочего стола — закрываем канал чуть позже, чтобы доиграл звук запуска. */
+    fun stopSoon() {
+        handler.removeCallbacks(stopRunnable)
+        handler.postDelayed(stopRunnable, 1500)
+    }
+
+    fun release() {
+        handler.removeCallbacks(stopRunnable)
+        running = false
+    }
+
+    private fun loop(gen: Int) {
+        try { Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO) } catch (_: Exception) { }
+        val minBuf = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        val track = try {
+            AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_GAME)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setSampleRate(rate)
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build()
+                )
+                .setBufferSizeInBytes(max(minBuf, 4096))
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+                .build()
         } catch (_: Exception) {
+            return
+        }
+
+        try {
+            track.play()
+            val chunk = 256
+            val mix = FloatArray(chunk)
+            val out = ShortArray(chunk)
+            while (running && gen == generation) {
+                java.util.Arrays.fill(mix, 0f)
+                synchronized(voices) {
+                    val it = voices.iterator()
+                    while (it.hasNext()) {
+                        val v = it.next()
+                        val n = min(chunk, v.data.size - v.pos)
+                        for (i in 0 until n) mix[i] += v.data[v.pos + i] * v.vol
+                        v.pos += n
+                        if (v.pos >= v.data.size) it.remove()
+                    }
+                }
+                for (i in 0 until chunk) out[i] = (mix[i].coerceIn(-1f, 1f) * 32767f).toInt().toShort()
+                if (track.write(out, 0, chunk) < 0) break
+            }
+        } catch (_: Exception) {
+        } finally {
+            try { track.stop() } catch (_: Exception) { }
+            track.release()
         }
     }
+
+    // ---------------- звуки ----------------
 
     /** Прокрутка: переход на соседний пункт или категорию. */
     fun tick() {
         val now = System.currentTimeMillis()
         if (now - lastTick < 35) return
         lastTick = now
-        play(tickId, 0.5f)
+        play(tickClip, 0.5f)
     }
 
     /** Нажатие клавиши на экранной клавиатуре. */
@@ -69,39 +138,38 @@ class XmbSounds(context: Context) {
         val now = System.currentTimeMillis()
         if (now - lastKey < 20) return
         lastKey = now
-        play(keyId, 0.55f)
+        play(keyClip, 0.55f)
     }
 
     /** Выбор пункта / подтверждение. */
-    fun ok() = play(okId, 0.55f)
+    fun ok() = play(okClip, 0.55f)
 
     /** Назад / отмена. */
-    fun back() = play(backId, 0.5f)
+    fun back() = play(backClip, 0.5f)
 
     /** Удержание приложения (открылось меню). */
-    fun hold() = play(holdId, 0.6f)
+    fun hold() = play(holdClip, 0.6f)
 
     /** Запуск приложения. */
-    fun launch() = play(launchId, 0.6f)
+    fun launch() = play(launchClip, 0.6f)
 
-    fun release() = pool.release()
-
-    private fun play(id: Int, vol: Float) {
+    private fun play(clip: FloatArray, vol: Float) {
         val v = vol * LEVELS[level]
-        if (v > 0f && id != 0 && loaded.contains(id)) pool.play(id, v, v, 1, 0, 1f)
+        if (v <= 0f) return
+        synchronized(voices) {
+            if (voices.size < 8) voices.add(Voice(clip, v))
+        }
+        if (!running) start()
     }
 
     // ---------------- синтез ----------------
 
-    private val rate = 44100
-    private val noise = Random(3)
-
-    private fun render(seconds: Float, f: (Float) -> Float): ShortArray {
+    private fun render(seconds: Float, f: (Float) -> Float): FloatArray {
         val n = (rate * seconds).toInt()
-        return ShortArray(n) { i ->
+        return FloatArray(n) { i ->
             val t = i.toFloat() / rate
             val fadeOut = ((n - i).toFloat() / (rate * 0.004f)).coerceAtMost(1f)
-            (f(t) * fadeOut * 32767f).toInt().coerceIn(-32767, 32767).toShort()
+            f(t) * fadeOut
         }
     }
 
@@ -146,23 +214,6 @@ class XmbSounds(context: Context) {
         val s1 = if (t > 0.12f) tone(2093f, t) * exp(-(t - 0.12f) / 0.12f) else 0f
         val s2 = if (t > 0.20f) tone(3136f, t) * exp(-(t - 0.20f) / 0.10f) else 0f
         attack(t, 0.006f) * (0.35f * chirp(520f, 2300f, t) * exp(-t / 0.16f) + 0.2f * s1 + 0.12f * s2)
-    }
-
-    private fun load(ctx: Context, name: String, pcm: ShortArray): Int {
-        val file = File(ctx.cacheDir, name)
-        writeWav(file, pcm)
-        return pool.load(file.path, 1)
-    }
-
-    private fun writeWav(file: File, pcm: ShortArray) {
-        val dataLen = pcm.size * 2
-        val buf = ByteBuffer.allocate(44 + dataLen).order(ByteOrder.LITTLE_ENDIAN)
-        buf.put("RIFF".toByteArray()); buf.putInt(36 + dataLen); buf.put("WAVE".toByteArray())
-        buf.put("fmt ".toByteArray()); buf.putInt(16); buf.putShort(1.toShort()); buf.putShort(1.toShort())
-        buf.putInt(rate); buf.putInt(rate * 2); buf.putShort(2.toShort()); buf.putShort(16.toShort())
-        buf.put("data".toByteArray()); buf.putInt(dataLen)
-        for (s in pcm) buf.putShort(s)
-        FileOutputStream(file).use { it.write(buf.array()) }
     }
 
     companion object {
