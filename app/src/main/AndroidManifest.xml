@@ -20,6 +20,14 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- Камера XMB -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
     <!-- Чтобы видеть все приложения с иконкой на рабочем столе (Android 11+) -->
     <queries>
         <intent>
@@ -98,6 +106,34 @@
             android:screenOrientation="fullUser"
             android:taskAffinity="com.xmb.launcher.clock"
             android:theme="@style/Theme.Xmb" />
+
+        <!-- Камера в стиле темы -->
+        <activity
+            android:name=".CameraActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="Камера XMB"
+            android:screenOrientation="portrait"
+            android:taskAffinity="com.xmb.launcher.camera"
+            android:theme="@style/Theme.Xmb">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.media.action.STILL_IMAGE_CAMERA" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.media.action.VIDEO_CAMERA" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.media.action.IMAGE_CAPTURE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
 
         <!-- Будильник: экран звонка, звонок, срабатывание -->
         <activity

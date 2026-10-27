@@ -15,7 +15,8 @@ enum class Glyph {
     WIFI, BLUETOOTH, DISPLAY, SOUND, PALETTE, HOME, GEAR, INFO, EMPTY,
     FAVORITE, SEARCH, LOCK,
     TORCH, PLAY, PAUSE, PREV, NEXT,
-    ALARM, TIMER, PLUS, HOURGLASS
+    ALARM, TIMER, PLUS, HOURGLASS,
+    FLASH, FLASH_OFF, FLASH_AUTO, FLIP, GRID, SHUTTER
 }
 
 /**
@@ -268,6 +269,45 @@ object Glyphs {
             Glyph.EMPTY -> {
                 C(c, 0f, 0f, 0.30f, stroke)
                 L(c, -0.14f, 0f, 0.14f, 0f, stroke)
+            }
+            Glyph.FLASH, Glyph.FLASH_OFF, Glyph.FLASH_AUTO -> { // молния
+                path.rewind()
+                path.moveTo(0.08f, -0.42f); path.lineTo(-0.24f, 0.06f); path.lineTo(-0.02f, 0.06f)
+                path.lineTo(-0.10f, 0.42f); path.lineTo(0.24f, -0.08f); path.lineTo(0.02f, -0.08f); path.close()
+                P(c, path, if (g == Glyph.FLASH) fill else stroke)
+                if (g == Glyph.FLASH_OFF) L(c, -0.36f, -0.36f, 0.36f, 0.36f, stroke)
+                if (g == Glyph.FLASH_AUTO) { // буква «A»
+                    L(c, 0.20f, 0.40f, 0.31f, 0.12f, stroke)
+                    L(c, 0.31f, 0.12f, 0.42f, 0.40f, stroke)
+                    L(c, 0.245f, 0.30f, 0.375f, 0.30f, stroke)
+                }
+            }
+            Glyph.FLIP -> { // две стрелки по кругу
+                r.set(-0.34f, -0.34f, 0.34f, 0.34f)
+                A(c, r, 200f, 140f, false, stroke)
+                A(c, r, 20f, 140f, false, stroke)
+                path.rewind()
+                path.moveTo(0.40f, -0.20f); path.lineTo(0.30f, 0.02f); path.lineTo(0.16f, -0.16f); path.close()
+                P(c, path, fill)
+                path.rewind()
+                path.moveTo(-0.40f, 0.20f); path.lineTo(-0.30f, -0.02f); path.lineTo(-0.16f, 0.16f); path.close()
+                P(c, path, fill)
+            }
+            Glyph.GRID -> { // сетка 3×3
+                rr(c, -0.40f, -0.40f, 0.40f, 0.40f, 0.06f, stroke)
+                L(c, -0.133f, -0.40f, -0.133f, 0.40f, stroke)
+                L(c, 0.133f, -0.40f, 0.133f, 0.40f, stroke)
+                L(c, -0.40f, -0.133f, 0.40f, -0.133f, stroke)
+                L(c, -0.40f, 0.133f, 0.40f, 0.133f, stroke)
+            }
+            Glyph.SHUTTER -> { // объектив-диафрагма
+                C(c, 0f, 0f, 0.40f, stroke)
+                for (k in 0 until 6) {
+                    val a0 = Math.toRadians((k * 60).toDouble())
+                    val a1 = Math.toRadians((k * 60 + 75).toDouble())
+                    L(c, (0.40 * kotlin.math.cos(a0)).toFloat(), (0.40 * kotlin.math.sin(a0)).toFloat(),
+                        (0.16 * kotlin.math.cos(a1)).toFloat(), (0.16 * kotlin.math.sin(a1)).toFloat(), stroke)
+                }
             }
         }
         c.restore()

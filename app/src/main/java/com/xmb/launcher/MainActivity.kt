@@ -343,7 +343,10 @@ class MainActivity : Activity(), XmbView.Listener {
         return listOf(
             XmbCategory("settings", "Настройки", Glyph.SETTINGS, settings),
             XmbCategory("alarm", "Будильник", Glyph.ALARM, buildAlarmItems()),
-            XmbCategory("photo", "Фото", Glyph.PHOTO, appsOf { Kind.PHOTO in it.kinds }),
+            XmbCategory("photo", "Фото", Glyph.PHOTO,
+                listOf(XmbItem("Камера XMB", "Фото и видео в стиле текущей темы", Glyph.SHUTTER,
+                    onClick = { CameraActivity.open(it) })) +
+                    appsOf { Kind.PHOTO in it.kinds }.filter { it.glyph != Glyph.EMPTY }),
             XmbCategory("music", "Музыка", Glyph.MUSIC, appsOf { Kind.MUSIC in it.kinds }),
             XmbCategory("video", "Видео", Glyph.VIDEO, appsOf { Kind.VIDEO in it.kinds }),
             XmbCategory("game", "Игры", Glyph.GAME, appsOf { Kind.GAME in it.kinds }),
