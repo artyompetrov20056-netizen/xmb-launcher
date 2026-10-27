@@ -861,112 +861,145 @@ class XmbBackground {
 
     // ---------------- сама змейка ----------------
 
-    /** Контур тела: x 0..1 от носа к хвосту, y — высота над землёй (доля высоты тела). */
-    private val bodyX = floatArrayOf(
-        0.000f, 0.025f, 0.075f, 0.150f, 0.250f, 0.380f, 0.500f, 0.600f, 0.690f, 0.770f, 0.840f, 0.900f, 0.950f, 1.000f,
-        0.930f, 0.800f, 0.620f, 0.420f, 0.230f, 0.100f, 0.030f
-    )
-    private val bodyY = floatArrayOf(
-        0.300f, 0.580f, 0.800f, 0.940f, 1.000f, 1.000f, 0.950f, 0.840f, 0.680f, 0.500f, 0.330f, 0.200f, 0.120f, 0.070f,
-        0.020f, 0.000f, -0.020f, -0.030f, -0.040f, -0.020f, 0.060f
-    )
-    private val bx = FloatArray(bodyX.size)
-    private val by = FloatArray(bodyX.size)
+    private val segN = 28
+    private val cxs = FloatArray(segN + 1)
+    private val cys = FloatArray(segN + 1)
+    private val rad = FloatArray(segN + 1)
+    private val ox = FloatArray(2 * (segN + 1) + 1)
+    private val oy = FloatArray(2 * (segN + 1) + 1)
     private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        shader = RadialGradient(0f, 0f, 1f, intArrayOf(Color.argb(90, 120, 80, 20), Color.TRANSPARENT), null, Shader.TileMode.CLAMP)
+        shader = RadialGradient(0f, 0f, 1f, intArrayOf(Color.argb(80, 120, 80, 20), Color.TRANSPARENT), null, Shader.TileMode.CLAMP)
     }
+    private var crawl = 0f
+    private val headOval = android.graphics.RectF()
+    private var lastCrawlT = -1f
 
+    /**
+     * Змея: длинное круглое тело, по которому от головы к хвосту бегут волны изгибов.
+     * Ползёт за счёт этих волн, у края останавливается, разворачивается и ползёт обратно.
+     */
     private fun drawCreature(c: Canvas, w: Float, horizon: Float, unit: Float, time: Float) {
-        // --- маршрут: ползёт влево, отдыхает и разворачивается, ползёт вправо, снова разворот ---
-        val cycle = 26f
-        val t = time % cycle
-        val baseL = min(w * 0.70f, unit * 0.78f)
-        val margin = baseL * 0.55f
+        val L = min(w * 0.86f, unit * 0.95f)
+        val margin = L * 0.52f
         val leftX = margin
         val rightX = w - margin
+        // --- маршрут ---
+        val cycle = 30f
+        val t = time % cycle
         var cx: Float
-        var dir: Float          // 1 — голова слева, -1 — голова справа
-        var flip = 1f           // сжатие при развороте
+        var dir: Float          // 1 — голова слева (ползёт влево), -1 — голова справа
+        var flip = 1f
         var moving = 0f
         when {
-            t < 10f -> {        // ползёт влево
-                val p = smooth(0f, 1f, t / 10f)
-                cx = rightX + (leftX - rightX) * p
-                dir = 1f; moving = 1f
-            }
-            t < 13f -> {        // отдых, затем разворот
+            t < 12f -> { cx = rightX + (leftX - rightX) * smooth(0f, 1f, t / 12f); dir = 1f; moving = 1f }
+            t < 15f -> {
                 cx = leftX; dir = 1f
-                val q = ((t - 12f) / 1f).coerceIn(0f, 1f)
+                val q = ((t - 14f) / 1f).coerceIn(0f, 1f)
                 if (q > 0f) { flip = kotlin.math.cos(q * PI.toFloat()); if (flip < 0f) { dir = -1f; flip = -flip } }
             }
-            t < 23f -> {        // ползёт вправо
-                val p = smooth(0f, 1f, (t - 13f) / 10f)
-                cx = leftX + (rightX - leftX) * p
-                dir = -1f; moving = 1f
-            }
-            else -> {           // отдых, разворот обратно
+            t < 27f -> { cx = leftX + (rightX - leftX) * smooth(0f, 1f, (t - 15f) / 12f); dir = -1f; moving = 1f }
+            else -> {
                 cx = rightX; dir = -1f
-                val q = ((t - 25f) / 1f).coerceIn(0f, 1f)
+                val q = ((t - 29f) / 1f).coerceIn(0f, 1f)
                 if (q > 0f) { flip = kotlin.math.cos(q * PI.toFloat()); if (flip < 0f) { dir = 1f; flip = -flip } }
             }
         }
         flip = max(flip, 0.06f)
 
-        // --- дыхание: объём сохраняется — выше значит короче ---
-        val breath = sin(time * 2f * PI.toFloat() / 3.2f)
-        val hMul = 1f + 0.06f * breath
-        val lMul = 1f - 0.02f * breath
-        val L = baseL * lMul
-        val H = baseL * 0.30f * hMul
+        // фаза волны: бежит быстрее, когда змея ползёт, и почти замирает на отдыхе
+        val dt = if (lastCrawlT < 0f) 0f else (time - lastCrawlT).coerceIn(0f, 0.1f)
+        lastCrawlT = time
+        crawl += dt * (0.35f + 1.9f * moving)
 
-        // --- волна сокращения от хвоста к голове во время ползания ---
-        val waveC = 1.15f - ((time * 0.9f) % 1.5f)
-        val wavePulse = moving * (0.5f + 0.5f * sin(time * 0.9f * 2f * PI.toFloat() / 1.5f))
+        val breath = sin(time * 2f * PI.toFloat() / 3.4f)
+        val thick = L * 0.07f * (1f + 0.05f * breath)
+        val amp = L * 0.06f * (0.55f + 0.45f * moving)
+        val waves = 1.6f
+        val base = horizon + unit * 0.018f
 
-        for (k in bodyX.indices) {
-            val xn = bodyX[k]
-            val bump = exp(-((xn - waveC) / 0.11f) * ((xn - waveC) / 0.11f))
-            val yMul = 1f + moving * 0.16f * bump
-            val xShift = -moving * 0.025f * bump * wavePulse
-            bx[k] = (xn + xShift - 0.5f) * L
-            by[k] = -bodyY[k] * H * (if (bodyY[k] > 0f) yMul else 1f)
+        // --- осевая линия и толщина ---
+        for (k in 0..segN) {
+            val sN = k / segN.toFloat()               // 0 — голова, 1 — хвост
+            // толщина: круглая голова, плавное сужение к хвосту
+            val r = (thick * (1f - 0.93f * smooth(0.22f, 1f, sN))).coerceAtLeast(L * 0.004f)
+            rad[k] = r
+            // волна изгибов: гребни приподнимаются, впадины касаются песка
+            val env = smooth(0f, 0.3f, sN)             // голова не дёргается
+            val wave = 0.5f - 0.5f * kotlin.math.cos(2f * PI.toFloat() * (waves * sN - crawl))
+            val head = (1f - smooth(0f, 0.3f, sN)) * L * 0.03f * (1f + 0.3f * sin(time * 1.3f))
+            cxs[k] = (sN - 0.5f) * L
+            cys[k] = -r - amp * wave * env - head
         }
 
-        val base = horizon + unit * 0.02f
-        // мягкая тень на песке
-        c.save(); c.translate(cx, base + H * 0.06f); c.scale(L * 0.58f, H * 0.16f); c.drawCircle(0f, 0f, 1f, shadowPaint); c.restore()
+        // --- контур: верх от хвоста к голове, нос, низ от головы к хвосту ---
+        var m = 0
+        for (k in segN downTo 0) {
+            val (nx, ny) = normal(k)
+            ox[m] = cxs[k] + nx * rad[k]; oy[m] = cys[k] + ny * rad[k]; m++
+        }
+        ox[m] = cxs[0] - rad[0] * 0.9f; oy[m] = cys[0]; m++
+        for (k in 0..segN) {
+            val (nx, ny) = normal(k)
+            ox[m] = cxs[k] - nx * rad[k]; oy[m] = cys[k] - ny * rad[k]; m++
+        }
+
+        // тень на песке
+        c.save(); c.translate(cx, base); c.scale(L * 0.55f, thick * 0.55f); c.drawCircle(0f, 0f, 1f, shadowPaint); c.restore()
 
         c.save()
         c.translate(cx, base)
         c.scale(dir * flip, 1f)
-        closedSpline(path, bx, by)
-        snakePaint.shader = LinearGradient(0f, -H * 1.05f, 0f, H * 0.05f,
-            intArrayOf(Color.rgb(184, 236, 120), Color.rgb(112, 190, 18), Color.rgb(82, 154, 0)),
+        closedSpline(path, ox, oy)
+        // голова — отдельный овал; сначала обводим оба, потом заливаем оба — получается цельный силуэт
+        val hx = cxs[0] + thick * 0.2f
+        val hy = cys[0] - thick * 0.15f
+        val hrx = thick * 1.55f
+        val hry = thick * 1.2f * (1f + 0.03f * breath)
+        headOval.set(hx - hrx, hy - hry, hx + hrx, hy + hry)
+        ink.strokeWidth = max(5f, unit * 0.016f)
+        c.drawPath(path, ink)
+        c.drawOval(headOval, ink)
+        snakePaint.shader = LinearGradient(0f, -thick * 2.6f - amp, 0f, 0f,
+            intArrayOf(Color.rgb(186, 238, 122), Color.rgb(112, 190, 18), Color.rgb(80, 150, 0)),
             floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
         c.drawPath(path, snakePaint)
-        // мягкий блик на спине
+        c.drawOval(headOval, snakePaint)
+        // блики вдоль спины и на голове
         fill.color = Color.WHITE
-        fill.alpha = 45
-        c.drawOval(-L * 0.28f, -H * 0.92f, L * 0.05f, -H * 0.70f, fill)
-        ink.strokeWidth = max(2.5f, unit * 0.008f)
-        c.drawPath(path, ink)
+        fill.alpha = 55
+        for (k in 5..segN - 6 step 3) {
+            val (nx, ny) = normal(k)
+            c.drawCircle(cxs[k] + nx * rad[k] * 0.55f, cys[k] + ny * rad[k] * 0.55f, rad[k] * 0.2f, fill)
+        }
+        fill.alpha = 70
+        c.drawOval(hx - hrx * 0.55f, hy - hry * 0.85f, hx + hrx * 0.05f, hy - hry * 0.5f, fill)
 
-        // глаз: моргает раз в ~4 секунды, на отдыхе — прикрыт чуть дольше
-        val ex = (0.13f - 0.5f) * L
-        val ey = -0.66f * H
+        // глаз и улыбка на голове
         val blink = (time % 4.1f) < 0.16f
         fill.color = Color.rgb(14, 14, 14)
         fill.alpha = 255
+        val ex = hx - hrx * 0.25f
+        val ey = hy - hry * 0.35f
         if (blink) c.drawRect(ex - unit * 0.010f, ey - unit * 0.0016f, ex + unit * 0.010f, ey + unit * 0.0016f, fill)
         else c.drawCircle(ex, ey, unit * 0.0075f, fill)
         fill.color = Color.WHITE
-        // улыбка от низа носа вверх
         path.rewind()
-        path.moveTo((0.02f - 0.5f) * L, -0.10f * H)
-        path.quadTo((0.14f - 0.5f) * L, -0.02f * H, (0.27f - 0.5f) * L, -0.30f * H)
+        path.moveTo(hx - hrx * 0.85f, hy + hry * 0.30f)
+        path.quadTo(hx - hrx * 0.30f, hy + hry * 0.75f, hx + hrx * 0.30f, hy + hry * 0.18f)
         ink.strokeWidth = max(2f, unit * 0.0065f)
         c.drawPath(path, ink)
         c.restore()
+    }
+
+    /** Нормаль к осевой линии (смотрит вверх-наружу). */
+    private fun normal(k: Int): Pair<Float, Float> {
+        val a = (k - 1).coerceAtLeast(0)
+        val b = (k + 1).coerceAtMost(segN)
+        val tx = cxs[b] - cxs[a]
+        val ty = cys[b] - cys[a]
+        val l = kotlin.math.hypot(tx, ty).coerceAtLeast(1e-4f)
+        // поворот касательной на -90°: для оси слева направо нормаль смотрит вверх (y < 0)
+        return Pair(ty / l, -tx / l)
     }
 
     /** Плавный замкнутый контур через точки (Catmull-Rom → кривые Безье). */
