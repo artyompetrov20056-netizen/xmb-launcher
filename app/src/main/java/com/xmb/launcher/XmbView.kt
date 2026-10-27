@@ -683,53 +683,65 @@ class XmbView(context: Context) : View(context) {
         else -> before + (d + 1f) * sp
     }
 
-    private fun catX(i: Int) = if (wheel()) wheelCX() + wheelRc() * kotlin.math.cos(catAngle(i))
+    private fun catX(i: Int) = if (wheel()) lerp(crossCatLX(i), crossCatPX(i), orient)
         else lerp(lAnchorX + (i - catPos) * lCatSp, pAnchorX, orient)
-    private fun catY(i: Int) = if (wheel()) wheelCY() + wheelRc() * sin(catAngle(i))
+    private fun catY(i: Int) = if (wheel()) lerp(crossCatLY(i), crossCatPY(i), orient)
         else lerp(lRowY, pAnchorY + (i - catPos) * pCatSp, orient)
-    private fun itemX(d: Float) = if (wheel()) wheelCX() + wheelRi() * kotlin.math.cos(itemAngle(d))
+    private fun itemX(d: Float) = if (wheel()) lerp(crossItemLX(d), crossItemPX(d), orient)
         else lerp(lAnchorX, along(d, pItemSelX, pItemBeforeX, pItemSp, unit * 0.04f), orient)
-    private fun itemY(d: Float) = if (wheel()) wheelCY() + wheelRi() * sin(itemAngle(d))
+    private fun itemY(d: Float) = if (wheel()) lerp(crossItemLY(d), crossItemPY(d), orient)
         else lerp(along(d, lItemSelY, lItemBeforeY, lItemSp, unit * 0.05f), pAnchorY, orient)
 
-    // ---------------- раскладка «колесо» (стиль «Веб-кор») ----------------
+    // ---------------- раскладка «кольца крест-накрест» (стиль «Веб-кор») ----------------
+    // Как на PS3: категории и приложения на перпендикулярных осях, только оси — дуги больших колец.
+    // Вертикально: категории на дуге, выгнутой влево; приложения на дуге, выгнутой вниз.
+    // Горизонтально: всё наоборот.
 
-    /** Меню закручено в колесо: категории — на внутреннем кольце, приложения — на внешнем. */
     private fun wheel() = bg.style.layout == 1
-    private fun labelOrient() = if (wheel()) (if (height > width) 1f else 0f) else orient
-    private fun wheelCX() = safeL - unit * 0.42f
-    private fun wheelCY() = height * 0.44f
-    private fun wheelRc() = unit * 0.78f
-    private fun wheelRi() = unit * 1.20f
-    private fun catAngle(i: Int) = (i - catPos) * 0.33f
-    private fun itemAngle(d: Float): Float {
-        val step = unit * 0.19f / wheelRi()
-        val extra = unit * (if (height > width) 0.14f else 0.05f) / wheelRi()
-        return d * step + (if (d >= 0f) min(d, 1f) else max(d, -1f)) * extra
-    }
+    private fun labelOrient() = orient
+    private fun ringA() = unit * 1.45f  // кольцо категорий
+    private fun ringB() = unit * 1.5f   // кольцо приложений
+    private fun crossPX() = safeL + width * 0.28f
+    private fun crossPY() = safeT + height * 0.42f
+    private fun pSelX() = crossPX() + unit * 0.30f
+
+    // вертикальная ориентация
+    private fun catAngP(i: Int) = (i - catPos) * pCatSp / ringA()
+    private fun crossCatPX(i: Int) = crossPX() - ringA() + ringA() * kotlin.math.cos(catAngP(i))
+    private fun crossCatPY(i: Int) = crossPY() + ringA() * sin(catAngP(i))
+    private fun itemAngP(d: Float) = (along(d, pSelX(), crossPX() - unit * 0.16f, pItemSp, unit * 0.04f) - pSelX()) / ringB()
+    private fun crossItemPX(d: Float) = pSelX() + ringB() * sin(itemAngP(d))
+    private fun crossItemPY(d: Float) = crossPY() - ringB() + ringB() * kotlin.math.cos(itemAngP(d))
+
+    // горизонтальная ориентация
+    private fun catAngL(i: Int) = (i - catPos) * lCatSp / ringA()
+    private fun crossCatLX(i: Int) = lAnchorX + ringA() * sin(catAngL(i))
+    private fun crossCatLY(i: Int) = lRowY - ringA() + ringA() * kotlin.math.cos(catAngL(i))
+    private fun itemAngL(d: Float) = (along(d, lItemSelY, lItemBeforeY, lItemSp, unit * 0.05f) - lItemSelY) / ringB()
+    private fun crossItemLX(d: Float) = lAnchorX - ringB() + ringB() * kotlin.math.cos(itemAngL(d))
+    private fun crossItemLY(d: Float) = lItemSelY + ringB() * sin(itemAngL(d))
 
     private fun drawWheelRings(c: Canvas) {
-        val cx = wheelCX()
-        val cy = wheelCY()
+        // центры и радиусы обоих колец
+        val aX = lerp(lAnchorX, crossPX() - ringA(), orient)
+        val aY = lerp(lRowY - ringA(), crossPY(), orient)
+        val bX = lerp(lAnchorX - ringB(), pSelX(), orient)
+        val bY = lerp(lItemSelY, crossPY() - ringB(), orient)
         boxLine.strokeWidth = max(1f, unit * 0.0022f)
-        boxLine.alpha = 70
-        c.drawCircle(cx, cy, wheelRc(), boxLine)
-        c.drawCircle(cx, cy, wheelRi(), boxLine)
-        boxLine.alpha = 35
-        c.drawCircle(cx, cy, (wheelRc() + wheelRi()) / 2f, boxLine)
-        // риски, вращающиеся вместе с категориями
+        boxLine.alpha = 75
+        c.drawCircle(aX, aY, ringA(), boxLine)
+        c.drawCircle(bX, bY, ringB(), boxLine)
+        boxLine.alpha = 30
+        c.drawCircle(aX, aY, ringA() - unit * 0.07f, boxLine)
+        c.drawCircle(bX, bY, ringB() + unit * 0.07f, boxLine)
+        // риски на кольце категорий вращаются вместе с ними
         boxLine.alpha = 90
-        for (k in -40..40) {
-            val ang = (k - (catPos * 3f) % 1f) * 0.11f
-            val r1 = wheelRc() - unit * 0.06f
+        for (k in -30..30) {
+            val ang = (if (orient > 0.5f) 0f else PI.toFloat() / 2f) + (k - (catPos * 3f) % 1f) * 0.06f
+            val r1 = ringA() - unit * 0.07f
             val r2 = r1 - unit * (if (k % 3 == 0) 0.035f else 0.018f)
-            c.drawLine(cx + r1 * kotlin.math.cos(ang), cy + r1 * sin(ang), cx + r2 * kotlin.math.cos(ang), cy + r2 * sin(ang), boxLine)
+            c.drawLine(aX + r1 * kotlin.math.cos(ang), aY + r1 * sin(ang), aX + r2 * kotlin.math.cos(ang), aY + r2 * sin(ang), boxLine)
         }
-        // указатель выбранного
-        boxLine.alpha = 160
-        val px = cx + wheelRi() + itemSize * 1.1f
-        c.drawLine(px, cy - unit * 0.02f, px + unit * 0.03f, cy, boxLine)
-        c.drawLine(px, cy + unit * 0.02f, px + unit * 0.03f, cy, boxLine)
     }
 
     /** Координаты касания в системе наклонённого меню. */
@@ -748,7 +760,7 @@ class XmbView(context: Context) : View(context) {
     }
 
     private fun currentCat() = if (categories.isEmpty()) 0 else catPos.roundToInt().coerceIn(0, categories.lastIndex)
-    private fun portraitNow() = wheel() || orient > 0.5f
+    private fun portraitNow() = orient > 0.5f
 
     // =====================================================================
     // Управление: касания
@@ -779,15 +791,12 @@ class XmbView(context: Context) : View(context) {
                     removeCallbacks(longPressRunnable)
                     val horizontal = abs(dx) > abs(dy)
                     // Альбомная: горизонтальный свайп — категории. Портретная: вертикальный свайп — категории.
-                    dragAxis = if (wheel()) {
-                        // колесо: левее середины между кольцами — категории, правее — приложения
-                        if (toLocal(downX, downY)[0] < wheelCX() + (wheelRc() + wheelRi()) / 2f) AXIS_CAT else AXIS_ITEM
-                    } else if (horizontal != portraitNow()) AXIS_CAT else AXIS_ITEM
+                    dragAxis = if (horizontal != portraitNow()) AXIS_CAT else AXIS_ITEM
                     dragCat = currentCat()
                     dragStart = if (dragAxis == AXIS_CAT) catPos else itemPos[dragCat]
-                    dragOrigin = if (wheel() || portraitNow() == (dragAxis == AXIS_CAT)) dy else dx
+                    dragOrigin = if (portraitNow() == (dragAxis == AXIS_CAT)) dy else dx
                 }
-                val delta = (if (wheel() || portraitNow() == (dragAxis == AXIS_CAT)) dy else dx) - dragOrigin
+                val delta = (if (portraitNow() == (dragAxis == AXIS_CAT)) dy else dx) - dragOrigin
                 when (dragAxis) {
                     AXIS_CAT -> {
                         catPos = rubber(dragStart - delta / catSpacing(), 0f, (categories.size - 1).toFloat())
@@ -804,7 +813,7 @@ class XmbView(context: Context) : View(context) {
                 val vt = velocity
                 vt?.addMovement(e)
                 vt?.computeCurrentVelocity(1000)
-                val v = if (vt == null) 0f else if (wheel() || portraitNow() == (dragAxis == AXIS_CAT)) vt.yVelocity else vt.xVelocity
+                val v = if (vt == null) 0f else if (portraitNow() == (dragAxis == AXIS_CAT)) vt.yVelocity else vt.xVelocity
                 when (dragAxis) {
                     AXIS_CAT -> {
                         val proj = catPos - v * 0.08f / catSpacing()
@@ -843,8 +852,8 @@ class XmbView(context: Context) : View(context) {
         invalidate()
     }
 
-    private fun catSpacing() = if (wheel()) wheelRc() * 0.33f else lerp(lCatSp, pCatSp, orient)
-    private fun itemSpacing() = if (wheel()) unit * 0.19f else lerp(lItemSp, pItemSp, orient)
+    private fun catSpacing() = lerp(lCatSp, pCatSp, orient)
+    private fun itemSpacing() = lerp(lItemSp, pItemSp, orient)
 
     private fun rubber(v: Float, lo: Float, hi: Float) = when {
         v < lo -> lo + (v - lo) * 0.3f

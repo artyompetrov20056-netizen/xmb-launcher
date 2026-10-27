@@ -125,7 +125,7 @@ class XmbBackground {
     fun setStyle(s: VisualStyle, animate: Boolean) {
         style = s
         Glyphs.weight = s.weight
-        Glyphs.tint = s.ink
+        Glyphs.tint = s.glyphInk
         Glyphs.boneMode = s.frame == FrameKind.CHROME
         updateTargets()
         if (!animate) snapColors()
@@ -148,7 +148,7 @@ class XmbBackground {
         autoTheme = prefs.getBoolean("theme_auto", false)
         style = VisualStyles.current(context)
         Glyphs.weight = style.weight
-        Glyphs.tint = style.ink
+        Glyphs.tint = style.glyphInk
         Glyphs.boneMode = style.frame == FrameKind.CHROME
         setTheme(XmbTheme.ALL[idx], animate = false)
     }
@@ -195,6 +195,7 @@ class XmbBackground {
             Scene.PARTICLES -> drawParticles(c, w, h, unit, time)
             Scene.CHROME -> drawChrome(c, w, h, unit, time)
             Scene.WEBCORE -> drawWebcore(c, w, h, unit, time)
+            Scene.SNAKE -> drawSnake(c, w, h, unit, time)
         }
     }
 
@@ -795,6 +796,137 @@ class XmbBackground {
     }
 
     private fun height(h: Float) = h.toInt()
+
+    // ---------------- Змейка: небо, песок, мягкая зелёная змейка ----------------
+
+    private var skyShader: Shader? = null
+    private var sandShader: Shader? = null
+    private var snakeKey = -1L
+    private val skyPaint = Paint()
+    private val sandPaint = Paint()
+    private val snakePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val ink = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; color = Color.rgb(14, 14, 14); strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+    }
+    private val snakeTop = FloatArray(41 * 2)
+    private val softGlow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = RadialGradient(0f, 0f, 1f, intArrayOf(Color.argb(70, 255, 170, 255), Color.TRANSPARENT), null, Shader.TileMode.CLAMP)
+    }
+
+    private fun drawSnake(c: Canvas, w: Float, h: Float, unit: Float, time: Float) {
+        val horizon = h * (if (h > w) 0.62f else 0.60f)
+        val key = w.toLong() * 100000L + h.toLong()
+        if (key != snakeKey) {
+            snakeKey = key
+            skyPaint.shader = LinearGradient(0f, 0f, 0f, horizon,
+                intArrayOf(Color.rgb(64, 8, 132), Color.rgb(44, 108, 194), Color.rgb(84, 92, 200), Color.rgb(156, 52, 200)),
+                floatArrayOf(0f, 0.5f, 0.78f, 1f), Shader.TileMode.CLAMP)
+            sandPaint.shader = LinearGradient(0f, horizon, 0f, h,
+                intArrayOf(Color.rgb(248, 228, 142), Color.rgb(244, 220, 128), Color.rgb(240, 210, 110)),
+                floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP)
+        }
+        c.drawRect(0f, 0f, w, horizon + 2f, skyPaint)
+
+        // мягкие светящиеся пятна в небе
+        for (k in 0 until 3) {
+            val gx = w * (0.2f + 0.3f * k + 0.05f * sin(time * 0.1f + k))
+            val gy = horizon * (0.35f + 0.15f * sin(time * 0.13f + k * 2f))
+            val gr = unit * (0.35f + 0.1f * k)
+            c.save(); c.translate(gx, gy); c.scale(gr, gr); c.drawCircle(0f, 0f, 1f, softGlow); c.restore()
+        }
+
+        // песок с мягкими полосами
+        c.drawRect(0f, horizon, w, h, sandPaint)
+        fill.color = Color.WHITE
+        for (k in 0 until 6) {
+            val y = horizon + (h - horizon) * (0.12f + k * 0.15f) + unit * 0.01f * sin(time * 0.3f + k)
+            fill.alpha = 18
+            c.drawRect(0f, y, w, y + unit * 0.02f, fill)
+        }
+        // линия горизонта
+        stroke.color = Color.rgb(246, 176, 28)
+        stroke.strokeWidth = max(2f, unit * 0.007f)
+        stroke.alpha = 255
+        c.drawLine(0f, horizon, w, horizon, stroke)
+        stroke.color = Color.WHITE
+
+        // камушки
+        rock(c, w * 0.80f, horizon + (h - horizon) * 0.32f, unit * 0.06f)
+        rock(c, w * 0.05f, horizon + (h - horizon) * 0.42f, unit * 0.035f)
+        rock(c, w * 0.10f, horizon + (h - horizon) * 0.46f, unit * 0.014f)
+        rock(c, w * 0.55f, horizon + (h - horizon) * 0.75f, unit * 0.045f)
+
+        // змейка: дышит, по телу бежит волна, медленно ползает, моргает
+        val len = min(w * 0.82f, unit * 0.88f)
+        val hc = len * 0.19f * (1f + 0.025f * sin(time * 1.3f))
+        val x0 = w * 0.09f + (w - len - w * 0.18f) * (0.5f + 0.5f * sin(time * 0.045f))
+        val base = horizon + unit * 0.015f
+        val n = 40
+        path.rewind()
+        for (i in 0..n) {
+            val t = i / n.toFloat()
+            val head = sin(PI.toFloat() * 0.5f * min(t / 0.16f, 1f))
+            val tail = 1f - smooth(0.30f, 1f, t)
+            val wave = 0.05f * sin(t * 11f - time * 2.2f) * t
+            val y = base - hc * (head * (0.15f + 0.85f * tail) + wave)
+            val x = x0 + len * t
+            snakeTop[i * 2] = x; snakeTop[i * 2 + 1] = y
+            if (i == 0) path.moveTo(x, base) else path.lineTo(x, y)
+        }
+        // нижний контур: слегка выпуклое брюшко
+        path.lineTo(x0 + len, base - hc * 0.02f)
+        path.quadTo(x0 + len * 0.5f, base + hc * 0.16f, x0 + len * 0.01f, base - hc * 0.05f)
+        path.close()
+        snakePaint.shader = LinearGradient(0f, base - hc, 0f, base,
+            intArrayOf(Color.rgb(176, 230, 112), Color.rgb(104, 182, 10), Color.rgb(78, 150, 0)),
+            floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
+        c.drawPath(path, snakePaint)
+        ink.strokeWidth = max(2.5f, unit * 0.008f)
+        c.drawPath(path, ink)
+
+        // глаз (моргает раз в ~4 секунды)
+        val ex = x0 + len * 0.075f
+        val ey = base - hc * 0.62f
+        val blink = (time % 4.2f) < 0.14f
+        fill.color = Color.rgb(14, 14, 14)
+        fill.alpha = 255
+        if (blink) c.drawRect(ex - unit * 0.009f, ey - unit * 0.0015f, ex + unit * 0.009f, ey + unit * 0.0015f, fill)
+        else c.drawCircle(ex, ey, unit * 0.0065f, fill)
+        fill.color = Color.WHITE
+        // улыбка
+        path.rewind()
+        path.moveTo(x0 + len * 0.02f, base - hc * 0.10f)
+        path.quadTo(x0 + len * 0.11f, base - hc * 0.02f, x0 + len * 0.18f, base - hc * 0.30f)
+        ink.strokeWidth = max(2f, unit * 0.006f)
+        c.drawPath(path, ink)
+    }
+
+    private fun smooth(e0: Float, e1: Float, x: Float): Float {
+        val t = ((x - e0) / (e1 - e0)).coerceIn(0f, 1f)
+        return t * t * (3f - 2f * t)
+    }
+
+    private val rockLight = Color.rgb(236, 184, 48)
+    private val rockDark = Color.rgb(176, 124, 16)
+
+    private fun rock(c: Canvas, x: Float, y: Float, s: Float) {
+        path.rewind()
+        path.moveTo(x - s, y + s * 0.5f); path.lineTo(x - s * 0.7f, y - s * 0.6f); path.lineTo(x + s * 0.1f, y - s * 0.75f)
+        path.lineTo(x + s, y - s * 0.1f); path.lineTo(x + s * 0.9f, y + s * 0.55f); path.lineTo(x, y + s * 0.75f); path.close()
+        fill.color = rockLight; fill.alpha = 255
+        c.drawPath(path, fill)
+        path.rewind()
+        path.moveTo(x + s * 0.1f, y - s * 0.75f); path.lineTo(x + s, y - s * 0.1f); path.lineTo(x + s * 0.9f, y + s * 0.55f)
+        path.lineTo(x, y + s * 0.75f); path.lineTo(x - s * 0.1f, y - s * 0.05f); path.close()
+        fill.color = rockDark
+        c.drawPath(path, fill)
+        fill.color = Color.WHITE
+        path.rewind()
+        path.moveTo(x - s, y + s * 0.5f); path.lineTo(x - s * 0.7f, y - s * 0.6f); path.lineTo(x + s * 0.1f, y - s * 0.75f)
+        path.lineTo(x + s, y - s * 0.1f); path.lineTo(x + s * 0.9f, y + s * 0.55f); path.lineTo(x, y + s * 0.75f); path.close()
+        ink.strokeWidth = max(1.5f, s * 0.09f)
+        c.drawPath(path, ink)
+    }
 
     // =====================================================================
 

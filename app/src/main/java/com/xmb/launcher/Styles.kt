@@ -13,10 +13,10 @@ import android.graphics.Shader
 import java.util.WeakHashMap
 
 /** Оформление иконок в стиле. */
-enum class FrameKind { NONE, BUBBLE, BEVEL, SQUARE, GLOW, ROUNDED, CARD, CHROME, HUD }
+enum class FrameKind { NONE, BUBBLE, BEVEL, SQUARE, GLOW, ROUNDED, CARD, CHROME, HUD, PEBBLE }
 
 /** Анимированная сцена фона. */
-enum class Scene { WAVES, SPHERES, TILES, CUBES, SOFT_WAVE, LINES, RIBBONS, LIGHT, PARTICLES, CHROME, WEBCORE }
+enum class Scene { WAVES, SPHERES, TILES, CUBES, SOFT_WAVE, LINES, RIBBONS, LIGHT, PARTICLES, CHROME, WEBCORE, SNAKE }
 
 /**
  * Стиль оформления: анимированный фон + вид иконок.
@@ -39,6 +39,8 @@ class VisualStyle(
     val ink: Int = Color.WHITE,
     /** Перекраска иконок приложений: 0 — нет, 1 — монохром в цвет стиля. */
     val iconFilter: Int = 0,
+    /** Цвет самих значков (если отличается от подписей). */
+    val glyphInk: Int = ink,
 )
 
 object VisualStyles {
@@ -61,6 +63,10 @@ object VisualStyles {
         VisualStyle(
             "Веб-кор", Scene.WEBCORE, intArrayOf(c(0xFF080C06), c(0xFF1A2412), c(0xFF050704)), FrameKind.HUD, 0.8f, 2,
             layout = 1, ink = c(0xFFD2DB9C), iconFilter = 1,
+        ),
+        VisualStyle(
+            "Змейка", Scene.SNAKE, intArrayOf(c(0xFF3F0A84), c(0xFF2C6DC2), c(0xFF9A35C8)), FrameKind.PEBBLE, 1.3f, 2,
+            glyphInk = c(0xFF16250A),
         ),
     )
 
@@ -148,6 +154,7 @@ object VisualStyles {
             }
             FrameKind.CHROME -> drawChromeFrame(c, cx, cy, size, a, sel, time)
             FrameKind.HUD -> drawHudFrame(c, s, cx, cy, size, a, sel, time)
+            FrameKind.PEBBLE -> drawPebble(c, cx, cy, size, a, sel)
             FrameKind.CARD -> {
                 val h = size * 0.64f
                 r.set(cx - h, cy - h, cx + h, cy + h)
@@ -215,6 +222,40 @@ object VisualStyles {
         }
         line.color = Color.WHITE
         fill.color = Color.WHITE
+    }
+
+    // ---------------- Змейка: мягкая зелёная «галечка» с контуром ----------------
+
+    private val pebbleFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = android.graphics.LinearGradient(0f, -0.5f, 0f, 0.5f,
+            intArrayOf(c(0xFFB9E87E), c(0xFF7CC22A), c(0xFF4E9A00)), floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP)
+    }
+    private val pebbleLine = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; color = c(0xFF101010); strokeJoin = Paint.Join.ROUND
+    }
+
+    private fun drawPebble(c: Canvas, cx: Float, cy: Float, size: Float, a: Float, sel: Float) {
+        val h = size * (0.62f + 0.04f * sel)
+        // мягкая тень
+        fill.color = c(0xFF2A0E52)
+        fill.alpha = (255 * a * 0.25f).toInt()
+        r.set(cx - h, cy - h * 0.9f + h * 0.18f, cx + h, cy + h * 0.9f + h * 0.18f)
+        c.drawRoundRect(r, h * 0.55f, h * 0.55f, fill)
+        fill.color = Color.WHITE
+        // сама галечка с градиентом
+        r.set(-0.5f, -0.5f, 0.5f, 0.5f)
+        pebbleFill.alpha = (255 * a).toInt()
+        c.save(); c.translate(cx, cy); c.scale(h * 2f, h * 1.8f)
+        c.drawRoundRect(r, 0.27f, 0.3f, pebbleFill)
+        c.restore()
+        pebbleLine.strokeWidth = (size * 0.045f).coerceAtLeast(2f)
+        pebbleLine.alpha = (255 * a).toInt()
+        r.set(cx - h, cy - h * 0.9f, cx + h, cy + h * 0.9f)
+        c.drawRoundRect(r, h * 0.55f, h * 0.55f, pebbleLine)
+        // блик
+        fill.alpha = (255 * a * (0.30f + 0.2f * sel)).toInt()
+        r.set(cx - h * 0.65f, cy - h * 0.72f, cx - h * 0.05f, cy - h * 0.45f)
+        c.drawOval(r, fill)
     }
 
     private val oliveFilter = android.graphics.ColorMatrixColorFilter(android.graphics.ColorMatrix(floatArrayOf(
