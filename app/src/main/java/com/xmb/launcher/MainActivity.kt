@@ -147,7 +147,7 @@ class MainActivity : Activity(), XmbView.Listener {
         handler.removeCallbacks(timerTick)
         handler.post(timerTick)
         LockController.start(this)
-        Ppsspp.refresh(this) { if (!isDestroyed) refreshMenu() }
+        Ppsspp.refresh(this) { if (!isDestroyed) { refreshMenu(); offerGamesFolder(false) } }
         if (reopenLockSetup) {
             // Вернулись из системных настроек — показываем обновлённый список разрешений
             reopenLockSetup = false
@@ -410,12 +410,31 @@ class MainActivity : Activity(), XmbView.Listener {
                 })
         }
         val mem = Ppsspp.memTree(this)
-        out += XmbItem("PPSSPP", if (mem == null) "Подключите папку PSP, чтобы здесь появились недавние игры" else Ppsspp.status.ifEmpty { "Папка PSP: " + Ppsspp.treeLabel(mem) },
+        val sub = when {
+            mem == null -> "Подключите папку PSP, чтобы здесь появились недавние игры"
+            Ppsspp.needsGamesFolder() -> "Нажмите, чтобы загрузить обложки и фоны игр"
+            else -> Ppsspp.status.ifEmpty { "Папка PSP: " + Ppsspp.treeLabel(mem) }
+        }
+        out += XmbItem("PPSSPP", sub,
             Glyph.SETTINGS, onClick = { it.openPpssppMenu() })
         return out
     }
 
+    /** Предложить доступ к папке с образами — для обложек и фонов. */
+    private fun offerGamesFolder(always: Boolean) {
+        if (!Ppsspp.needsGamesFolder()) return
+        if (!always && prefs.getBoolean("psp_cover_asked", false)) return
+        prefs.edit().putBoolean("psp_cover_asked", true).apply()
+        val g = Ppsspp.games.firstOrNull { !it.readable } ?: return
+        xmb.showOverlay(DialogOverlay("Оформление игр",
+            "Чтобы показать обложки и фоны, как на PSP, разрешите чтение папки с играми — она откроется сама, нажмите «Использовать эту папку»",
+            listOf("Разрешить", "Не сейчас")) { pick ->
+            if (pick == 0) pickTree(REQ_PSP_GAMES, null, Ppsspp.gameFolderUri(g.entry))
+        })
+    }
+
     fun openPpssppMenu() {
+        if (Ppsspp.memTree(this) != null && Ppsspp.needsGamesFolder()) { offerGamesFolder(true); return }
         val mem = Ppsspp.memTree(this)
         val games = Ppsspp.gamesTree(this)
         val sub = "Папка PSP: " + Ppsspp.treeLabel(mem) + " · Игры: " + Ppsspp.treeLabel(games)
@@ -424,7 +443,7 @@ class MainActivity : Activity(), XmbView.Listener {
         xmb.showOverlay(DialogOverlay("PPSSPP", sub, opts) { pick ->
             when (pick) {
                 0 -> pickTree(REQ_PSP_MEM, "PSP")
-                1 -> pickTree(REQ_PSP_GAMES, null)
+                1 -> pickTree(REQ_PSP_GAMES, null, Ppsspp.games.firstOrNull()?.let { Ppsspp.gameFolderUri(it.entry) })
                 2 -> Ppsspp.refresh(this) { refreshMenu() }
                 3 -> {
                     Ppsspp.setTree(this, false, null); Ppsspp.setTree(this, true, null)
@@ -435,12 +454,13 @@ class MainActivity : Activity(), XmbView.Listener {
         })
     }
 
-    private fun pickTree(request: Int, hint: String?) {
+    private fun pickTree(request: Int, hint: String?, initial: android.net.Uri? = null) {
         val i = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
-        if (hint != null) i.putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI,
+        if (initial != null) i.putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, initial)
+        else if (hint != null) i.putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI,
             android.net.Uri.parse("content://com.android.externalstorage.documents/document/primary%3A" + hint))
         if (request == REQ_PSP_MEM) Toast.makeText(this, "Выберите папку PSP — ту, что указана в PPSSPP как Memory Stick", Toast.LENGTH_LONG).show()
-        else Toast.makeText(this, "Выберите папку, где лежат образы игр", Toast.LENGTH_LONG).show()
+        else Toast.makeText(this, "Нажмите «Использовать эту папку» внизу экрана", Toast.LENGTH_LONG).show()
         try {
             @Suppress("DEPRECATION")
             startActivityForResult(i, request)
@@ -458,6 +478,14 @@ class MainActivity : Activity(), XmbView.Listener {
         Ppsspp.refresh(this) {
             refreshMenu()
             if (!games && Ppsspp.games.isEmpty()) Toast.makeText(this, Ppsspp.status, Toast.LENGTH_LONG).show()
+            if (games) {
+                val msg = when {
+                    Ppsspp.needsGamesFolder() -> "В этой папке нет образа игры — выберите папку, где он лежит"
+                    Ppsspp.games.none { it.icon != null } -> "Обложку прочитать не удалось: формат образа не поддерживается (нужен ISO, CSO или PBP)"
+                    else -> "Обложки и фоны загружены — задержитесь на игре"
+                }
+                Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+            }
         }
     }
 

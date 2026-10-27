@@ -29,7 +29,7 @@ object Ppsspp {
     private val PACKAGES = listOf("org.ppsspp.ppssppgold", "org.ppsspp.ppsspp", "org.ppsspp.ppsspplegacy")
     private const val EXT_AUTH = "com.android.externalstorage.documents"
 
-    class Game(val entry: String, val title: String, val icon: Bitmap?, val pic: File?)
+    class Game(val entry: String, val title: String, val icon: Bitmap?, val pic: File?, val readable: Boolean)
 
     @Volatile var games: List<Game> = emptyList()
         private set
@@ -70,7 +70,7 @@ object Ppsspp {
         Thread {
             try {
                 val list = load(app)
-                val sig = status + "#" + list.joinToString("|") { it.entry + ":" + it.title + ":" + (it.icon != null) + ":" + (it.pic != null) }
+                val sig = status + "#" + list.joinToString("|") { it.entry + ":" + it.title + ":" + it.readable + ":" + (it.icon != null) + ":" + (it.pic != null) }
                 if (sig != lastSig) {
                     lastSig = sig
                     games = list
@@ -155,7 +155,8 @@ object Ppsspp {
         }
         val title = if (metaF.exists()) metaF.readText().trim() else ""
         val icon = if (iconF.exists()) BitmapFactory.decodeFile(iconF.path)?.let { square(it) } else null
-        return Game(entry, title.ifEmpty { nameFromEntry(entry) }, icon, picF.takeIf { it.exists() && it.length() > 0 })
+        return Game(entry, title.ifEmpty { nameFromEntry(entry) }, icon, picF.takeIf { it.exists() && it.length() > 0 },
+            metaF.exists() || readableUri(ctx, entry) != null)
     }
 
     /** ICON0 у PSP широкий (144×80) — кладём в квадрат с прозрачными полями. */
@@ -168,7 +169,18 @@ object Ppsspp {
     }
 
     /** URI образа, который мы сами можем прочитать (через выданные нам папки). */
-    private fun readableUri(ctx: Context, entry: String): Uri? {
+    /** Папка, где лежит образ игры, — чтобы открыть выбор папки сразу на ней. */
+    fun gameFolderUri(entry: String): Uri? {
+        val (auth, docId) = docIdOf(entry) ?: return null
+        if (auth != EXT_AUTH) return null
+        val parent = if (docId.contains('/')) docId.substringBeforeLast('/') else docId.substringBefore(':') + ":"
+        return DocumentsContract.buildDocumentUri(EXT_AUTH, parent)
+    }
+
+    /** Есть игры, образы которых мы не можем прочитать (нет доступа к их папке). */
+    fun needsGamesFolder(): Boolean = games.any { !it.readable }
+
+    private fun docIdOf(entry: String): Pair<String, String>? {
         val docId: String
         val auth: String
         if (entry.startsWith("content://")) {
@@ -188,6 +200,11 @@ object Ppsspp {
                 else -> return null
             }
         }
+        return auth to docId
+    }
+
+    private fun readableUri(ctx: Context, entry: String): Uri? {
+        val (auth, docId) = docIdOf(entry) ?: return null
         for (tree in listOfNotNull(gamesTree(ctx), memTree(ctx))) {
             if (tree.authority != auth) continue
             val tid = try { DocumentsContract.getTreeDocumentId(tree) } catch (_: Exception) { continue }
