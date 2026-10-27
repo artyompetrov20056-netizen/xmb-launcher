@@ -64,6 +64,9 @@ class MainActivity : Activity(), XmbView.Listener {
     private var reopenLockSetup = false
     private var apps: List<AppEntry>? = null
     private val favorites = LinkedHashSet<String>()
+    /** Скрытые из меню приложения (ключи) и открыта ли сейчас папка «Скрытые приложения». */
+    private val hidden = LinkedHashSet<String>()
+    private var hiddenOpen = false
     private var loadGeneration = 0
     private val handler = Handler(Looper.getMainLooper())
     private val reloadRunnable = Runnable { reloadApps() }
@@ -85,6 +88,7 @@ class MainActivity : Activity(), XmbView.Listener {
         themeIndex = prefs.getInt(PREF_THEME, 0).coerceIn(0, XmbTheme.ALL.lastIndex)
         autoTheme = prefs.getBoolean(PREF_THEME_AUTO, false)
         prefs.getString(PREF_FAVORITES, "")!!.split('\n').filter { it.isNotBlank() }.forEach { favorites += it }
+        prefs.getString(PREF_HIDDEN, "")!!.split('\n').filter { it.isNotBlank() }.forEach { hidden += it }
 
         // Кнопки громкости на рабочем столе регулируют медиа — через этот поток идут звуки меню
         volumeControlStream = android.media.AudioManager.STREAM_MUSIC
@@ -164,13 +168,16 @@ class MainActivity : Activity(), XmbView.Listener {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         xmb.closeOverlay()
+        if (hiddenOpen) { hiddenOpen = false; refreshMenu() }
         xmb.goToFirstItem()
     }
 
     /** «Назад» закрывает открытое окно, иначе возвращает к первому пункту. */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.keyCode == KeyEvent.KEYCODE_BACK) {
-            if (event.action == KeyEvent.ACTION_UP) xmb.onBack()
+            if (event.action == KeyEvent.ACTION_UP) {
+                if (!xmb.hasOverlay() && hiddenOpen) closeHidden() else xmb.onBack()
+            }
             return true
         }
         return super.dispatchKeyEvent(event)
@@ -228,7 +235,8 @@ class MainActivity : Activity(), XmbView.Listener {
     private fun themeName() = if (autoTheme) XmbTheme.AUTO_NAME else XmbTheme.ALL[themeIndex].name
 
     private fun buildCategories(): List<XmbCategory> {
-        val list = apps
+        // скрытые приложения не попадают ни в одну категорию, избранное и поиск
+        val list = apps?.filter { it.component.flattenToString() !in hidden }
         fun appsOf(filter: (AppEntry) -> Boolean): List<XmbItem> = when {
             list == null -> listOf(XmbItem("Загрузка…", glyph = Glyph.EMPTY))
             else -> list.filter(filter).map { appItem(it) }
@@ -327,11 +335,46 @@ class MainActivity : Activity(), XmbView.Listener {
             XmbCategory("video", "Видео", Glyph.VIDEO, appsOf { Kind.VIDEO in it.kinds }),
             XmbCategory("game", "Игры", Glyph.GAME, appsOf { Kind.GAME in it.kinds }),
             XmbCategory("network", "Сеть", Glyph.NETWORK, appsOf { Kind.NETWORK in it.kinds }),
-            XmbCategory("apps", "Приложения", Glyph.APPS, appsOf { true }),
+            XmbCategory("apps", "Приложения", Glyph.APPS, buildAppsItems(list)),
             XmbCategory("favorites", "Избранное", Glyph.FAVORITE, favItems),
             XmbCategory("search", "Поиск", Glyph.SEARCH, search, tapOpens = true),
             XmbCategory("exit", "Выход", Glyph.HOME, exit, tapOpens = true),
         )
+    }
+
+    /** Категория «Приложения»: обычный список или открытая папка «Скрытые приложения». */
+    private fun buildAppsItems(visible: List<AppEntry>?): List<XmbItem> {
+        val all = apps ?: return listOf(XmbItem("Загрузка…", glyph = Glyph.EMPTY))
+        if (hiddenOpen) {
+            val items = ArrayList<XmbItem>()
+            items += XmbItem("Назад", "К списку приложений", Glyph.PREV, onClick = { it.closeHidden() })
+            val hiddenApps = all.filter { it.component.flattenToString() in hidden }
+            if (hiddenApps.isEmpty()) items += XmbItem("Пусто", "Скрытых приложений нет", glyph = Glyph.EMPTY)
+            else hiddenApps.forEach { items += appItem(it) }
+            return items
+        }
+        val items = ArrayList<XmbItem>()
+        items += XmbItem(
+            "Скрытые приложения",
+            if (hidden.isEmpty()) "Пусто · дважды коснитесь экрана на приложении → «Скрыть из меню»" else "${hidden.size} шт.",
+            Glyph.LOCK,
+            onClick = { it.openHidden() }
+        )
+        (visible ?: emptyList()).forEach { items += appItem(it) }
+        return items
+    }
+
+    fun openHidden() {
+        hiddenOpen = true
+        refreshMenu()
+        xmb.goToFirstItem()
+    }
+
+    fun closeHidden() {
+        hiddenOpen = false
+        sounds.back()
+        refreshMenu()
+        xmb.goToFirstItem()
     }
 
     private fun appItem(e: AppEntry) = XmbItem(
@@ -904,7 +947,7 @@ class MainActivity : Activity(), XmbView.Listener {
 
     /** Поиск: выбранное приложение не запускается сразу, а открывает меню действий. */
     fun openSearch() {
-        val all = apps?.map { appItem(it) } ?: emptyList()
+        val all = apps?.filter { it.component.flattenToString() !in hidden }?.map { appItem(it) } ?: emptyList()
         lateinit var search: SearchOverlay
         search = SearchOverlay(all) { item ->
             showAppActions(item, withOpen = true, back = { xmb.showOverlay(search) })
@@ -932,6 +975,24 @@ class MainActivity : Activity(), XmbView.Listener {
             if (isFav) favorites.remove(key) else favorites.add(key)
             prefs.edit().putString(PREF_FAVORITES, favorites.joinToString("\n")).apply()
             Toast.makeText(this, if (isFav) "Убрано из избранного" else "Добавлено в избранное", Toast.LENGTH_SHORT).show()
+            refreshMenu()
+            back?.invoke()
+        }
+        val isHidden = key in hidden
+        options += if (isHidden) "Показать в меню" else "Скрыть из меню"
+        actions += {
+            sounds.ok()
+            if (isHidden) hidden.remove(key) else { hidden.add(key); favorites.remove(key) }
+            prefs.edit()
+                .putString(PREF_HIDDEN, hidden.joinToString("\n"))
+                .putString(PREF_FAVORITES, favorites.joinToString("\n"))
+                .apply()
+            Toast.makeText(
+                this,
+                if (isHidden) "Приложение снова в меню" else "Скрыто. Найти: Приложения → Скрытые приложения",
+                Toast.LENGTH_LONG
+            ).show()
+            if (hiddenOpen && hidden.isEmpty()) hiddenOpen = false
             refreshMenu()
             back?.invoke()
         }
@@ -1026,6 +1087,7 @@ class MainActivity : Activity(), XmbView.Listener {
         private const val PREF_SOUND = "sound"
         private const val PREF_SOUND_LEVEL = "sound_level"
         private const val PREF_FAVORITES = "favorites"
+        private const val PREF_HIDDEN = "hidden_apps"
         private const val PREF_PAD_STYLE = "pad_style"
         private const val PREF_MUSIC_LEVEL = "music_level"
         private const val REQ_BG = 101

@@ -724,7 +724,7 @@ class XmbView(context: Context) : View(context) {
                         itemTarget[dragCat] = proj.roundToInt().coerceIn(0, max(0, n - 1))
                         dragAxis = AXIS_NONE
                     }
-                    else -> if (!longPressFired) { performClick(); handleTap(e.x, e.y) }
+                    else -> if (!longPressFired) { performClick(); onTap(e.x, e.y) }
                 }
                 velocity?.recycle(); velocity = null
                 invalidate()
@@ -789,12 +789,65 @@ class XmbView(context: Context) : View(context) {
         return if (inLabel) sel else -1
     }
 
+    // ---------------- двойное касание: меню выбранного пункта ----------------
+
+    private val doubleTapMs = ViewConfiguration.getDoubleTapTimeout().toLong().coerceIn(200L, 350L)
+    private var lastTapTime = 0L
+    private var lastTapX = 0f
+    private var lastTapY = 0f
+    private var pendingItem: XmbItem? = null
+    private val pendingRunnable = Runnable {
+        pendingItem?.let { activate(it) }
+        pendingItem = null
+    }
+
+    /**
+     * Двойное касание в любом месте экрана открывает меню выбранного пункта —
+     * удобно одной рукой. Запуск по одиночному касанию ждёт ~0,3 с, чтобы их различить.
+     */
+    private fun onTap(x: Float, y: Float) {
+        val now = SystemClock.uptimeMillis()
+        val isDouble = now - lastTapTime < doubleTapMs && hypot(x - lastTapX, y - lastTapY) < unit * 0.25f
+        if (isDouble) {
+            lastTapTime = 0L
+            removeCallbacks(pendingRunnable)
+            pendingItem = null
+            openSelectedOptions()
+            return
+        }
+        lastTapTime = now
+        lastTapX = x
+        lastTapY = y
+        handleTap(x, y)
+    }
+
+    private fun scheduleActivate(item: XmbItem) {
+        removeCallbacks(pendingRunnable)
+        pendingItem = item
+        postDelayed(pendingRunnable, doubleTapMs)
+    }
+
+    private fun openSelectedOptions() {
+        if (categories.isEmpty()) return
+        val ci = currentCat()
+        val item = categories[ci].items.getOrNull(itemTarget[ci]) ?: return
+        if (item.key != null) {
+            performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            sounds?.hold()
+            listener?.onItemOptions(item)
+        } else {
+            sounds?.back()
+        }
+    }
+
+    fun hasOverlay() = overlay != null
+
     private fun handleTap(x: Float, y: Float) {
         val ci = currentCat()
         val cat = categories.getOrNull(ci) ?: return
         val hit = hitItem(x, y)
         if (hit >= 0) {
-            if (hit == itemTarget[ci] && abs(itemPos[ci] - hit) < 0.3f) activate(cat.items[hit])
+            if (hit == itemTarget[ci] && abs(itemPos[ci] - hit) < 0.3f) scheduleActivate(cat.items[hit])
             else itemTarget[ci] = hit
             return
         }
@@ -802,7 +855,7 @@ class XmbView(context: Context) : View(context) {
             if (hypot(x - catX(i), y - catY(i)) < catSize * 0.8f) {
                 val c = categories[i]
                 if (i == catTarget && abs(catPos - i) < 0.3f && c.tapOpens && c.items.isNotEmpty()) {
-                    activate(c.items[0])
+                    scheduleActivate(c.items[0])
                 } else {
                     selectCategory(i)
                 }
