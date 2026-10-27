@@ -31,6 +31,14 @@ class MainActivity : Activity(), XmbView.Listener {
     private var themeItem: XmbItem? = null
     private var soundItem: XmbItem? = null
     private var lockItem: XmbItem? = null
+    private var padItem: XmbItem? = null
+
+    /** Подключение / отключение геймпада. */
+    private val inputListener = object : android.hardware.input.InputManager.InputDeviceListener {
+        override fun onInputDeviceAdded(deviceId: Int) = updateGamepad()
+        override fun onInputDeviceRemoved(deviceId: Int) = updateGamepad()
+        override fun onInputDeviceChanged(deviceId: Int) = updateGamepad()
+    }
     private var reopenLockSetup = false
     private var apps: List<AppEntry>? = null
     private val favorites = LinkedHashSet<String>()
@@ -66,6 +74,7 @@ class MainActivity : Activity(), XmbView.Listener {
         xmb.sounds = sounds
         xmb.setTheme(XmbTheme.ALL[themeIndex], animate = false)
         xmb.setAutoTheme(autoTheme)
+        xmb.padStyle = prefs.getInt(PREF_PAD_STYLE, PadIcons.STYLE_PS)
         xmb.initialCategoryId = prefs.getString(PREF_CATEGORY, "game")
         xmb.setOnApplyWindowInsetsListener { _, insets ->
             xmb.applyInsets(insets)
@@ -78,12 +87,19 @@ class MainActivity : Activity(), XmbView.Listener {
         xmb.requestFocus()
 
         try { launcherApps.registerCallback(appsCallback) } catch (_: Exception) { }
+        try {
+            getSystemService(android.hardware.input.InputManager::class.java)?.registerInputDeviceListener(inputListener, handler)
+        } catch (_: Exception) { }
+        updateGamepad()
         reloadApps()
         LockController.start(this)
     }
 
     override fun onDestroy() {
         try { launcherApps.unregisterCallback(appsCallback) } catch (_: Exception) { }
+        try {
+            getSystemService(android.hardware.input.InputManager::class.java)?.unregisterInputDeviceListener(inputListener)
+        } catch (_: Exception) { }
         handler.removeCallbacks(reloadRunnable)
         sounds.release()
         super.onDestroy()
@@ -206,6 +222,13 @@ class MainActivity : Activity(), XmbView.Listener {
         )
         lockItem = lock
 
+        val pad = XmbItem(
+            "Кнопки геймпада", padSubtitle(),
+            glyph = Glyph.GAME,
+            onClick = { it.openPadStylePicker() }
+        )
+        padItem = pad
+
         val settings = listOf(
             settingsItem("Сеть Wi‑Fi", "Подключение к беспроводным сетям", Glyph.WIFI,
                 Intent(Settings.ACTION_WIFI_SETTINGS)),
@@ -217,6 +240,7 @@ class MainActivity : Activity(), XmbView.Listener {
                 Intent(Settings.ACTION_SOUND_SETTINGS)),
             theme,
             sound,
+            pad,
             lock,
             settingsItem("Рабочий стол по умолчанию", "Выбрать, какой рабочий стол открывается кнопкой «Домой»", Glyph.HOME,
                 Intent(Settings.ACTION_HOME_SETTINGS),
@@ -330,6 +354,42 @@ class MainActivity : Activity(), XmbView.Listener {
             onCancel = { sounds.level = original },
         )
     }
+
+    // =====================================================================
+    // Геймпад
+    // =====================================================================
+
+    private fun updateGamepad() {
+        val connected = android.view.InputDevice.getDeviceIds().any { id ->
+            val d = android.view.InputDevice.getDevice(id) ?: return@any false
+            !d.isVirtual && (
+                (d.sources and android.view.InputDevice.SOURCE_GAMEPAD) == android.view.InputDevice.SOURCE_GAMEPAD ||
+                    (d.sources and android.view.InputDevice.SOURCE_JOYSTICK) == android.view.InputDevice.SOURCE_JOYSTICK
+                )
+        }
+        xmb.setGamepadConnected(connected)
+    }
+
+    private fun padSubtitle() = PadIcons.STYLE_NAMES[xmb.padStyle]
+
+    /** Стиль значков кнопок — рулеткой: PlayStation или Xbox. */
+    fun openPadStylePicker() {
+        val original = xmb.padStyle
+        xmb.showRoulette(
+            PadIcons.STYLE_NAMES, original,
+            onChange = { xmb.padStyle = it },
+            onDone = {
+                xmb.padStyle = it
+                prefs.edit().putInt(PREF_PAD_STYLE, it).apply()
+                padItem?.subtitle = padSubtitle()
+            },
+            onCancel = { xmb.padStyle = original },
+        )
+    }
+
+    override fun onItemOptions(item: XmbItem) = showAppActions(item, withOpen = true, back = null)
+
+    override fun onOpenSearch() = openSearch()
 
     // =====================================================================
     // Экран блокировки
@@ -529,5 +589,6 @@ class MainActivity : Activity(), XmbView.Listener {
         private const val PREF_SOUND = "sound"
         private const val PREF_SOUND_LEVEL = "sound_level"
         private const val PREF_FAVORITES = "favorites"
+        private const val PREF_PAD_STYLE = "pad_style"
     }
 }

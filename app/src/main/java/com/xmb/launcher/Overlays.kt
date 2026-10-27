@@ -50,6 +50,13 @@ abstract class Overlay {
 
     protected fun a(v: Float) = (v * fade).toInt().coerceIn(0, 255)
 
+    /** Подсказки по кнопкам геймпада для этого окна. */
+    open fun padHints(): List<Pair<PadBtn, String>> = listOf(
+        PadBtn.DPAD to "Выбор",
+        PadBtn.SOUTH to "Принять",
+        PadBtn.EAST to "Отмена",
+    )
+
     companion object {
         fun textPaint(): TextPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
@@ -491,7 +498,10 @@ class SearchOverlay(
             KeyEvent.KEYCODE_DPAD_DOWN -> moveSel(0f, 1f)
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_BUTTON_A -> press(keys[sel])
             KeyEvent.KEYCODE_ENTER -> results.firstOrNull()?.let { launch(it) }
-            KeyEvent.KEYCODE_DEL -> press(Key("", K_DEL, 1))
+            KeyEvent.KEYCODE_DEL, KeyEvent.KEYCODE_BUTTON_Y -> press(Key("", K_DEL, 1))
+            KeyEvent.KEYCODE_BUTTON_X -> press(Key("", K_SPACE, 1))
+            KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_BUTTON_R1 -> press(Key("", K_LANG, 1))
+            KeyEvent.KEYCODE_BUTTON_START -> results.firstOrNull()?.let { launch(it) }
             KeyEvent.KEYCODE_BUTTON_B -> onBack()
             else -> {
                 val ch = event.unicodeChar
@@ -502,6 +512,16 @@ class SearchOverlay(
         }
         return true
     }
+
+    override fun padHints(): List<Pair<PadBtn, String>> = listOf(
+        PadBtn.DPAD to "Клавиши",
+        PadBtn.SOUTH to "Ввод",
+        PadBtn.WEST to "Пробел",
+        PadBtn.NORTH to "Стереть",
+        PadBtn.SHOULDERS to "RU/EN",
+        PadBtn.START to "Найти",
+        PadBtn.EAST to "Закрыть",
+    )
 
     /** Перемещение выделения клавиш с помощью крестовины геймпада. */
     private fun moveSel(dx: Float, dy: Float) {
@@ -690,6 +710,12 @@ class RouletteOverlay(
         onCancel()
         host.playBack()
     }
+
+    override fun padHints(): List<Pair<PadBtn, String>> = listOf(
+        PadBtn.DPAD to "Изменить",
+        PadBtn.SOUTH to "Применить",
+        PadBtn.EAST to "Отмена",
+    )
 
     override fun onKey(keyCode: Int, event: KeyEvent): Boolean {
         when (keyCode) {

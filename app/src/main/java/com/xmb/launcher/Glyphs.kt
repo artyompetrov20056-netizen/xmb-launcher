@@ -236,3 +236,109 @@ object Glyphs {
         c.drawRoundRect(r, rad, rad, p)
     }
 }
+
+/** Кнопки геймпада по расположению: нижняя, правая, левая, верхняя. */
+enum class PadBtn { SOUTH, EAST, WEST, NORTH, DPAD, START, SHOULDERS }
+
+/**
+ * Значки кнопок геймпада для подсказок.
+ * style 0 — PlayStation (✕ ○ □ △), style 1 — Xbox (A B X Y).
+ * Нижняя = ✕/A, правая = ○/B, левая = □/X, верхняя = △/Y.
+ */
+object PadIcons {
+    const val STYLE_PS = 0
+    const val STYLE_XBOX = 1
+    val STYLE_NAMES = listOf("PlayStation  ✕ ○ △ □", "Xbox  A B X Y")
+
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+    }
+    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+        typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+    }
+    private val path = Path()
+    private val r = RectF()
+
+    private val PS_COLORS = intArrayOf(
+        Color.rgb(124, 178, 232), // ✕ синий
+        Color.rgb(255, 107, 107), // ○ красный
+        Color.rgb(229, 139, 208), // □ розовый
+        Color.rgb(79, 209, 165),  // △ зелёный
+    )
+    private val XB_COLORS = intArrayOf(
+        Color.rgb(93, 187, 70),   // A зелёный
+        Color.rgb(226, 70, 60),   // B красный
+        Color.rgb(60, 123, 226),  // X синий
+        Color.rgb(242, 193, 46),  // Y жёлтый
+    )
+    private val XB_LETTERS = arrayOf("A", "B", "X", "Y")
+
+    /** Ширина значка (для раскладки подсказок). */
+    fun width(b: PadBtn, rad: Float) = if (b == PadBtn.SHOULDERS || b == PadBtn.START) rad * 3.0f else rad * 2f
+
+    fun draw(c: Canvas, b: PadBtn, cx: Float, cy: Float, rad: Float, style: Int, alpha: Int) {
+        val a = alpha.coerceIn(0, 255)
+        when (b) {
+            PadBtn.SOUTH, PadBtn.EAST, PadBtn.WEST, PadBtn.NORTH -> {
+                val i = b.ordinal
+                if (style == STYLE_XBOX) {
+                    fill.color = XB_COLORS[i]; fill.alpha = a
+                    c.drawCircle(cx, cy, rad, fill)
+                    text.color = if (i == 3) Color.rgb(40, 30, 0) else Color.WHITE
+                    text.alpha = a
+                    text.textSize = rad * 1.15f
+                    c.drawText(XB_LETTERS[i], cx, cy + text.textSize * 0.36f, text)
+                } else {
+                    fill.color = Color.BLACK; fill.alpha = (a * 0.5f).toInt()
+                    c.drawCircle(cx, cy, rad, fill)
+                    stroke.color = Color.WHITE; stroke.alpha = (a * 0.8f).toInt(); stroke.strokeWidth = rad * 0.1f
+                    c.drawCircle(cx, cy, rad, stroke)
+                    stroke.color = PS_COLORS[i]; stroke.alpha = a; stroke.strokeWidth = rad * 0.17f
+                    val s = rad * 0.42f
+                    when (b) {
+                        PadBtn.SOUTH -> {
+                            c.drawLine(cx - s, cy - s, cx + s, cy + s, stroke)
+                            c.drawLine(cx - s, cy + s, cx + s, cy - s, stroke)
+                        }
+                        PadBtn.EAST -> c.drawCircle(cx, cy, rad * 0.45f, stroke)
+                        PadBtn.WEST -> { r.set(cx - s * 0.95f, cy - s * 0.95f, cx + s * 0.95f, cy + s * 0.95f); c.drawRect(r, stroke) }
+                        else -> {
+                            path.rewind()
+                            path.moveTo(cx, cy - rad * 0.5f)
+                            path.lineTo(cx + rad * 0.46f, cy + rad * 0.32f)
+                            path.lineTo(cx - rad * 0.46f, cy + rad * 0.32f)
+                            path.close()
+                            c.drawPath(path, stroke)
+                        }
+                    }
+                }
+            }
+            PadBtn.DPAD -> {
+                fill.color = Color.WHITE; fill.alpha = a
+                val t = rad * 0.34f
+                val l = rad * 0.95f
+                r.set(cx - t, cy - l, cx + t, cy + l); c.drawRoundRect(r, t * 0.4f, t * 0.4f, fill)
+                r.set(cx - l, cy - t, cx + l, cy + t); c.drawRoundRect(r, t * 0.4f, t * 0.4f, fill)
+            }
+            PadBtn.START, PadBtn.SHOULDERS -> {
+                val w = width(b, rad)
+                r.set(cx - w / 2f, cy - rad * 0.7f, cx + w / 2f, cy + rad * 0.7f)
+                fill.color = Color.BLACK; fill.alpha = (a * 0.5f).toInt()
+                c.drawRoundRect(r, rad * 0.5f, rad * 0.5f, fill)
+                stroke.color = Color.WHITE; stroke.alpha = (a * 0.8f).toInt(); stroke.strokeWidth = rad * 0.1f
+                c.drawRoundRect(r, rad * 0.5f, rad * 0.5f, stroke)
+                val label = when {
+                    b == PadBtn.START && style == STYLE_XBOX -> "MENU"
+                    b == PadBtn.START -> "START"
+                    style == STYLE_XBOX -> "LB RB"
+                    else -> "L1 R1"
+                }
+                text.color = Color.WHITE; text.alpha = a
+                text.textSize = rad * 0.62f
+                c.drawText(label, cx, cy + text.textSize * 0.36f, text)
+            }
+        }
+    }
+}

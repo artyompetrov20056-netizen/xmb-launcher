@@ -16,6 +16,7 @@ import android.os.SystemClock
 import android.text.TextPaint
 import android.text.TextUtils
 import android.text.format.DateFormat
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.VelocityTracker
@@ -48,6 +49,10 @@ class XmbView(context: Context) : View(context) {
         fun onItemActivated(item: XmbItem)
         fun onItemLongPress(item: XmbItem)
         fun onCategorySelected(category: XmbCategory)
+        /** △ / Y на геймпаде — меню действий для выбранного пункта. */
+        fun onItemOptions(item: XmbItem)
+        /** □ / X на геймпаде — поиск. */
+        fun onOpenSearch()
     }
 
     var listener: Listener? = null
@@ -284,7 +289,7 @@ class XmbView(context: Context) : View(context) {
         lastFrame = now
         time += dt
 
-        val moving = step(dt)
+        var moving = step(dt)
         updateMetrics()
 
         bg.draw(c, width, height, unit, orient, time)
@@ -298,6 +303,7 @@ class XmbView(context: Context) : View(context) {
         frame.l = safeL; frame.t = safeT; frame.r = safeR; frame.b = safeB
         frame.portrait = height > width
         overlay?.draw(c, frame, time)
+        if (drawPadHints(c)) moving = true
 
         // Пока что-то двигается — 60 кадров/с, в покое — только волны ~30 кадров/с
         if (moving) postInvalidateOnAnimation() else postInvalidateDelayed(33)
@@ -703,6 +709,9 @@ class XmbView(context: Context) : View(context) {
     // =====================================================================
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (KeyEvent.isGamepadButton(keyCode) ||
+            event.isFromSource(InputDevice.SOURCE_GAMEPAD) || event.isFromSource(InputDevice.SOURCE_JOYSTICK)
+        ) notePadInput()
         overlay?.let {
             val handled = it.onKey(keyCode, event)
             invalidate()
@@ -719,12 +728,194 @@ class XmbView(context: Context) : View(context) {
                 val ci = currentCat()
                 categories[ci].items.getOrNull(itemTarget[ci])?.let { activate(it) }
             }
+            KeyEvent.KEYCODE_BUTTON_Y -> {
+                val ci = currentCat()
+                categories[ci].items.getOrNull(itemTarget[ci])?.let {
+                    if (it.key != null) { sounds?.hold(); listener?.onItemOptions(it) }
+                }
+            }
+            KeyEvent.KEYCODE_BUTTON_X -> { sounds?.ok(); listener?.onOpenSearch() }
+            KeyEvent.KEYCODE_BUTTON_B -> {
+                val ci = currentCat()
+                if (itemTarget[ci] != 0) { sounds?.back(); goToFirstItem() }
+            }
+            KeyEvent.KEYCODE_BUTTON_L1 -> moveItem(-5)
+            KeyEvent.KEYCODE_BUTTON_R1 -> moveItem(5)
             else -> return super.onKeyDown(keyCode, event)
         }
         return true
     }
 
     private fun moveCat(delta: Int) = selectCategory(catTarget + delta)
+
+    // ---------------- стик и крестовина-«шляпка» ----------------
+
+    private var stickDir = 0
+    private val stickRepeat = object : Runnable {
+        override fun run() {
+            if (stickDir == 0) return
+            pressDirection(stickDir)
+            postDelayed(this, 110)
+        }
+    }
+
+    private fun pressDirection(keyCode: Int) {
+        onKeyDown(keyCode, KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
+    }
+
+    /** Крестовина-«шляпка» и левый стик геймпада (XInput) — как стрелки, с автоповтором. */
+    override fun onGenericMotionEvent(e: MotionEvent): Boolean {
+        if (e.isFromSource(InputDevice.SOURCE_JOYSTICK) && e.actionMasked == MotionEvent.ACTION_MOVE) {
+            notePadInput()
+            val hx = e.getAxisValue(MotionEvent.AXIS_HAT_X)
+            val hy = e.getAxisValue(MotionEvent.AXIS_HAT_Y)
+            val sx = e.getAxisValue(MotionEvent.AXIS_X)
+            val sy = e.getAxisValue(MotionEvent.AXIS_Y)
+            val x = if (abs(hx) > 0.5f) hx else if (abs(sx) > 0.6f) sx else 0f
+            val y = if (abs(hy) > 0.5f) hy else if (abs(sy) > 0.6f) sy else 0f
+            val dir = when {
+                x != 0f && abs(x) >= abs(y) -> if (x > 0f) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_LEFT
+                y != 0f -> if (y > 0f) KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_UP
+                else -> 0
+            }
+            if (dir != stickDir) {
+                stickDir = dir
+                removeCallbacks(stickRepeat)
+                if (dir != 0) {
+                    pressDirection(dir)
+                    postDelayed(stickRepeat, 380)
+                }
+            }
+            return true
+        }
+        return super.onGenericMotionEvent(e)
+    }
+
+    // ---------------- подсказки геймпада ----------------
+
+    /** 0 — значки PlayStation, 1 — Xbox. */
+    var padStyle = PadIcons.STYLE_PS
+        set(v) { field = v; invalidate() }
+    private var padConnected = false
+    private var padBannerUntil = 0L
+    private var padHintUntil = 0L
+    private val hintText = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        setShadowLayer(5f, 0f, 1f, Color.argb(150, 0, 0, 0))
+    }
+    private val hintTitle = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textAlign = Paint.Align.CENTER
+        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        setShadowLayer(5f, 0f, 1f, Color.argb(150, 0, 0, 0))
+    }
+    private val hintBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
+
+    /** Геймпад подключили или отключили. При подключении — большая подсказка на 6 секунд. */
+    fun setGamepadConnected(connected: Boolean) {
+        val now = SystemClock.uptimeMillis()
+        if (connected && !padConnected) {
+            padBannerUntil = now + 6000
+            padHintUntil = now + 15000
+        }
+        padConnected = connected
+        invalidate()
+    }
+
+    private fun notePadInput() {
+        if (!padConnected) padConnected = true
+        padHintUntil = SystemClock.uptimeMillis() + 15000
+        invalidate()
+    }
+
+    private fun mainPadHints(): List<Pair<PadBtn, String>> {
+        val list = ArrayList<Pair<PadBtn, String>>()
+        list += PadBtn.DPAD to "Перемещение"
+        list += PadBtn.SOUTH to "Открыть"
+        val ci = currentCat()
+        if (categories.getOrNull(ci)?.items?.getOrNull(itemTarget.getOrElse(ci) { 0 })?.key != null) {
+            list += PadBtn.NORTH to "Опции"
+        }
+        list += PadBtn.WEST to "Поиск"
+        list += PadBtn.SHOULDERS to "Быстрее"
+        list += PadBtn.EAST to "В начало"
+        return list
+    }
+
+    /** Рисует подсказки. Возвращает true, пока они видны (нужна анимация затухания). */
+    private fun drawPadHints(c: Canvas): Boolean {
+        if (!padConnected) return false
+        val now = SystemClock.uptimeMillis()
+        if (now >= padHintUntil && now >= padBannerUntil) return false
+        val hints = overlay?.padHints() ?: mainPadHints()
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val u = unit
+        val banner = now < padBannerUntil && overlay == null
+
+        val fadeMs = 600f
+        val left = max(padHintUntil, padBannerUntil) - now
+        val alpha = (left / fadeMs).coerceIn(0f, 1f)
+
+        val iconR = if (banner) u * 0.03f else u * 0.022f
+        hintText.textSize = if (banner) u * 0.036f else u * 0.028f
+        val gapIn = iconR * 0.5f
+        val gapOut = iconR * 1.4f
+        val maxW = (w - safeL - safeR) * 0.92f
+
+        // раскладка по строкам
+        val rows = ArrayList<ArrayList<Pair<PadBtn, String>>>()
+        val rowW = ArrayList<Float>()
+        var cur = ArrayList<Pair<PadBtn, String>>()
+        var curW = 0f
+        for (hnt in hints) {
+            val iw = PadIcons.width(hnt.first, iconR) + gapIn + hintText.measureText(hnt.second)
+            val add = if (cur.isEmpty()) iw else iw + gapOut
+            if (cur.isNotEmpty() && curW + add > maxW) {
+                rows += cur; rowW += curW
+                cur = ArrayList(); curW = 0f
+            }
+            curW += if (cur.isEmpty()) iw else iw + gapOut
+            cur += hnt
+        }
+        if (cur.isNotEmpty()) { rows += cur; rowW += curW }
+
+        val rowH = iconR * 2.6f
+        val titleH = if (banner) u * 0.075f else 0f
+        val pad = iconR * 0.9f
+        val boxW = (rowW.maxOrNull() ?: 0f) + pad * 2f
+        val boxH = rows.size * rowH + titleH + pad
+        val cx = (safeL + w - safeR) / 2f
+        val bottom = h - safeB - u * (if (banner) 0.08f else 0.03f)
+        tmpRect.set(cx - boxW / 2f, bottom - boxH, cx + boxW / 2f, bottom)
+        hintBg.alpha = (alpha * (if (banner) 170f else 110f)).toInt()
+        c.drawRoundRect(tmpRect, iconR * 1.2f, iconR * 1.2f, hintBg)
+
+        var y = tmpRect.top + pad * 0.5f
+        if (banner) {
+            hintTitle.textSize = u * 0.042f
+            hintTitle.alpha = (255 * alpha).toInt()
+            c.drawText("Геймпад подключён", cx, y + titleH * 0.62f, hintTitle)
+            y += titleH
+        }
+        val a = (255 * alpha).toInt()
+        hintText.alpha = a
+        for ((ri, row) in rows.withIndex()) {
+            var x = cx - rowW[ri] / 2f
+            val ry = y + rowH / 2f
+            for ((i, hnt) in row.withIndex()) {
+                if (i > 0) x += gapOut
+                val iw = PadIcons.width(hnt.first, iconR)
+                PadIcons.draw(c, hnt.first, x + iw / 2f, ry, iconR, padStyle, a)
+                x += iw + gapIn
+                c.drawText(hnt.second, x, ry + hintText.textSize * 0.36f, hintText)
+                x += hintText.measureText(hnt.second)
+            }
+            y += rowH
+        }
+        return true
+    }
 
     private fun moveItem(delta: Int) {
         val ci = currentCat()
