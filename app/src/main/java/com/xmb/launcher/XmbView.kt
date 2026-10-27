@@ -526,8 +526,8 @@ class XmbView(context: Context) : View(context) {
 
             val before = (-d).coerceIn(0f, 1f)
             val a = 255f * catAlpha * lerp(0.75f, 1f, cl) * (1f - 0.4f * before)
-            if (cl > 0.05f) drawGlow(c, x, y, size * 1.25f, catAlpha * cl * (0.55f + 0.15f * sin(time * 3f)))
-            drawIcon(c, cat.items[j], x, y, size, a.toInt())
+            if (cl > 0.05f) drawGlow(c, x, y, size * 1.25f, glowScale() * catAlpha * cl * (0.55f + 0.15f * sin(time * 3f)))
+            drawIcon(c, cat.items[j], x, y, size, a.toInt(), cl)
 
             val la = a * (1f - orient)
             if (la > 3f) drawLandscapeLabel(c, cat.items[j], x, y, size, cl, la)
@@ -551,8 +551,10 @@ class XmbView(context: Context) : View(context) {
             val cl = max(0f, 1f - abs(d))
             val size = catSize * (1f + 0.25f * cl)
             if (x < -size * 2 || x > w + size * 2 || y < -size * 2 || y > h + size * 2) continue
-            if (cl > 0.05f) drawGlow(c, x, y, size * 1.15f, cl * 0.45f)
-            Glyphs.draw(c, categories[i].glyph, x, y, size * 0.85f, (255 * lerp(0.6f, 1f, cl)).toInt())
+            if (cl > 0.05f) drawGlow(c, x, y, size * 1.15f, glowScale() * cl * 0.45f)
+            val ga = (255 * lerp(0.6f, 1f, cl)).toInt()
+            VisualStyles.drawFrame(c, bg.style, x, y, size * 0.85f, ga, cl)
+            Glyphs.draw(c, categories[i].glyph, x, y, size * (if (bg.style.frame == FrameKind.NONE) 0.85f else 0.62f), ga)
             if (cl > 0.02f) {
                 catPaint.alpha = (255 * cl).toInt()
                 c.drawText(categories[i].title, x, y + size * 0.5f + unit * 0.045f, catPaint)
@@ -560,15 +562,29 @@ class XmbView(context: Context) : View(context) {
         }
     }
 
-    private fun drawIcon(c: Canvas, item: XmbItem, x: Float, y: Float, size: Float, alpha: Int) {
+    /** Сила общего свечения выбранного пункта: в стилях с рамками оно слабее. */
+    private fun glowScale() = when (bg.style.frame) {
+        FrameKind.NONE, FrameKind.GLOW -> 1f
+        FrameKind.BUBBLE -> 0.6f
+        else -> 0.35f
+    }
+
+    /** Текущий стиль оформления (фон + вид иконок). */
+    fun setVisualStyle(s: VisualStyle) {
+        bg.setStyle(s, animate = true)
+        invalidate()
+    }
+
+    private fun drawIcon(c: Canvas, item: XmbItem, x: Float, y: Float, size: Float, alpha: Int, sel: Float = 0f) {
+        val st = bg.style
+        VisualStyles.drawFrame(c, st, x, y, size * 0.8f, alpha, sel)
         val bmp = item.icon
         if (bmp != null) {
-            val s = size * 0.46f
+            val s = size * (if (st.frame == FrameKind.NONE || st.frame == FrameKind.GLOW) 0.46f else 0.40f)
             tmpRect.set(x - s, y - s, x + s, y + s)
-            iconPaint.alpha = alpha.coerceIn(0, 255)
-            c.drawBitmap(bmp, null, tmpRect, iconPaint)
+            VisualStyles.drawAppIcon(c, st, bmp, tmpRect, alpha)
         } else {
-            Glyphs.draw(c, item.glyph ?: Glyph.EMPTY, x, y, size * 0.8f, alpha)
+            Glyphs.draw(c, item.glyph ?: Glyph.EMPTY, x, y, size * (if (st.frame == FrameKind.NONE) 0.8f else 0.6f), alpha)
         }
     }
 

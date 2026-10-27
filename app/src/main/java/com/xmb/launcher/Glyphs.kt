@@ -33,11 +33,14 @@ object Glyphs {
     private val path = Path()
     private val r = RectF()
 
+    /** Толщина линий значков — задаётся стилем оформления. */
+    var weight = 1f
+
     fun draw(c: Canvas, g: Glyph, cx: Float, cy: Float, size: Float, alpha: Int) {
         val a = alpha.coerceIn(0, 255)
         stroke.color = Color.WHITE
         stroke.alpha = a
-        stroke.strokeWidth = 0.075f
+        stroke.strokeWidth = 0.075f * weight
         fill.color = Color.WHITE
         fill.alpha = a
 

@@ -34,6 +34,7 @@ class MainActivity : Activity(), XmbView.Listener {
     private var lockItem: XmbItem? = null
     private var padItem: XmbItem? = null
     private var musicItem: XmbItem? = null
+    private var styleItem: XmbItem? = null
     private var musicVolItem: XmbItem? = null
     private lateinit var media: AppMedia
     private lateinit var music: XmbMusic
@@ -101,6 +102,7 @@ class MainActivity : Activity(), XmbView.Listener {
         xmb.setTheme(XmbTheme.ALL[themeIndex], animate = false)
         xmb.setAutoTheme(autoTheme)
         xmb.padStyle = prefs.getInt(PREF_PAD_STYLE, PadIcons.STYLE_PS)
+        xmb.setVisualStyle(VisualStyles.current(this))
 
         media = AppMedia(this)
         music = XmbMusic()
@@ -232,7 +234,10 @@ class MainActivity : Activity(), XmbView.Listener {
     private fun appVersion(): String =
         try { packageManager.getPackageInfo(packageName, 0).versionName ?: "?" } catch (_: Exception) { "?" }
 
-    private fun themeName() = if (autoTheme) XmbTheme.AUTO_NAME else XmbTheme.ALL[themeIndex].name
+    private fun themeName(): String {
+        val base = if (autoTheme) XmbTheme.AUTO_NAME else XmbTheme.ALL[themeIndex].name
+        return if (VisualStyles.current(this).palette != null) "$base (в этом стиле свои цвета)" else base
+    }
 
     private fun buildCategories(): List<XmbCategory> {
         // скрытые приложения не попадают ни в одну категорию, избранное и поиск
@@ -242,6 +247,13 @@ class MainActivity : Activity(), XmbView.Listener {
             else -> list.filter(filter).map { appItem(it) }
                 .ifEmpty { listOf(XmbItem("Нет приложений", "Здесь пока пусто", glyph = Glyph.EMPTY)) }
         }
+
+        val styleIt = XmbItem(
+            "Стиль оформления", "Сейчас: ${VisualStyles.current(this).name}",
+            glyph = Glyph.DISPLAY,
+            onClick = { it.openStylePicker() }
+        )
+        styleItem = styleIt
 
         val theme = XmbItem(
             "Цвет темы", "Сейчас: ${themeName()}",
@@ -293,6 +305,7 @@ class MainActivity : Activity(), XmbView.Listener {
                 Intent(Settings.ACTION_DISPLAY_SETTINGS)),
             settingsItem("Громкость", "Громкость и мелодии телефона", Glyph.SOUND,
                 Intent(Settings.ACTION_SOUND_SETTINGS)),
+            styleIt,
             theme,
             sound,
             pad,
@@ -414,6 +427,22 @@ class MainActivity : Activity(), XmbView.Listener {
     }
 
     /** Выбор цвета темы, включая «Переливающийся». */
+    /** Стиль оформления рулеткой — фон и иконки меняются сразу при прокрутке. */
+    fun openStylePicker() {
+        val original = VisualStyles.index(this)
+        xmb.showRoulette(
+            VisualStyles.NAMES, original,
+            onChange = { xmb.setVisualStyle(VisualStyles.ALL[it]) },
+            onDone = {
+                prefs.edit().putInt("visual_style", it).apply()
+                xmb.setVisualStyle(VisualStyles.ALL[it])
+                styleItem?.subtitle = "Сейчас: ${VisualStyles.ALL[it].name}"
+                themeItem?.subtitle = "Сейчас: ${themeName()}"
+            },
+            onCancel = { xmb.setVisualStyle(VisualStyles.ALL[original]) },
+        )
+    }
+
     fun openThemePicker() {
         val names = XmbTheme.ALL.map { it.name } + "${XmbTheme.AUTO_NAME} — новый цвет каждые 2 минуты"
         val current = if (autoTheme) names.lastIndex else themeIndex
