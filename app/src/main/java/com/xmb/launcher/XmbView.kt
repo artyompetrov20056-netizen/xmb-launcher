@@ -53,6 +53,8 @@ class XmbView(context: Context) : View(context) {
         fun onItemOptions(item: XmbItem)
         /** □ / X на геймпаде — поиск. */
         fun onOpenSearch()
+        /** Задержались на пункте около секунды (item) или ушли с него (null) — для музыки приложения. */
+        fun onHover(item: XmbItem?)
     }
 
     var listener: Listener? = null
@@ -229,6 +231,124 @@ class XmbView(context: Context) : View(context) {
         out.set(itemX(d), itemY(d))
     }
 
+    // ---------------- фон приложения (как PIC1 на PS3) ----------------
+
+    /** Где лежит картинка приложения для нужной ориентации (true — горизонтально). */
+    var backgroundProvider: ((XmbItem, Boolean) -> java.io.File?)? = null
+
+    private var dwellKey: String? = null
+    private var dwellStart = 0L
+    private var hoverItem: XmbItem? = null
+    private var picBmp: android.graphics.Bitmap? = null
+    private var picPath: String? = null
+    private var picAlpha = 0f
+    private var prevBmp: android.graphics.Bitmap? = null
+    private var prevAlpha = 0f
+    private var loadingPath: String? = null
+    private val picCache = LinkedHashMap<String, android.graphics.Bitmap>()
+    private val picPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val picSrc = android.graphics.Rect()
+    private val picDst = RectF()
+
+    /** Картинку или музыку поменяли — показать заново. */
+    fun refreshHover() {
+        picCache.clear()
+        picPath = null
+        dwellKey = null
+        if (hoverItem != null) { hoverItem = null; listener?.onHover(null) }
+        invalidate()
+    }
+
+    private fun stepHover(dt: Float): Boolean {
+        var moving = false
+        val now = SystemClock.uptimeMillis()
+        var item: XmbItem? = null
+        if (categories.isNotEmpty() && dragAxis == AXIS_NONE) {
+            val ci = currentCat()
+            if (abs(catPos - catTarget) < 0.05f && abs(itemPos[ci] - itemTarget[ci]) < 0.05f) {
+                item = categories[ci].items.getOrNull(itemTarget[ci])
+            }
+        }
+        val key = item?.key
+        if (key != dwellKey) {
+            dwellKey = key
+            dwellStart = now
+            if (hoverItem != null) {
+                hoverItem = null
+                listener?.onHover(null)
+            }
+        } else if (key != null && hoverItem == null && now - dwellStart > 900) {
+            hoverItem = item
+            listener?.onHover(item)
+        }
+        if (key != null && hoverItem == null) moving = true // ждём окончания задержки
+
+        // какая картинка нужна сейчас
+        val h = hoverItem
+        val wantFile = if (h != null) backgroundProvider?.invoke(h, !portraitNow()) else null
+        val wantPath = wantFile?.path
+        if (wantPath != null && wantPath != picPath && wantPath != loadingPath) {
+            val cached = picCache[wantPath]
+            if (cached != null) showPicture(wantPath, cached) else loadPicture(wantFile)
+        }
+        val target = if (wantPath != null && wantPath == picPath) 1f else 0f
+        val k = 1f - exp(-dt * 4f)
+        if (abs(target - picAlpha) > 0.003f) { picAlpha += (target - picAlpha) * k; moving = true } else picAlpha = target
+        if (prevAlpha > 0.003f) { prevAlpha -= prevAlpha * k; moving = true } else { prevAlpha = 0f; prevBmp = null }
+        return moving
+    }
+
+    private fun showPicture(path: String, bmp: android.graphics.Bitmap) {
+        if (picBmp != null && picAlpha > 0.01f && picPath != path) {
+            prevBmp = picBmp
+            prevAlpha = picAlpha
+            picAlpha = 0f
+        }
+        picBmp = bmp
+        picPath = path
+    }
+
+    private fun loadPicture(file: java.io.File) {
+        val path = file.path
+        loadingPath = path
+        val maxSide = max(width, height).coerceAtLeast(720)
+        Thread {
+            val bmp = AppMedia.loadForDisplay(file, maxSide)
+            post {
+                if (loadingPath == path) loadingPath = null
+                if (bmp != null) {
+                    picCache[path] = bmp
+                    while (picCache.size > 4) picCache.remove(picCache.keys.first())
+                    val h = hoverItem
+                    if (h != null && backgroundProvider?.invoke(h, !portraitNow())?.path == path) showPicture(path, bmp)
+                }
+                invalidate()
+            }
+        }.start()
+    }
+
+    private fun drawPicture(c: Canvas) {
+        drawPictureLayer(c, prevBmp, prevAlpha)
+        drawPictureLayer(c, picBmp, picAlpha)
+    }
+
+    /** Картинка по центру с обрезкой под экран и лёгким затемнением, чтобы читалось меню. */
+    private fun drawPictureLayer(c: Canvas, bmp: android.graphics.Bitmap?, alpha: Float) {
+        if (bmp == null || alpha <= 0.003f) return
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val scale = max(w / bmp.width, h / bmp.height)
+        val sw = (w / scale).toInt().coerceAtMost(bmp.width)
+        val sh = (h / scale).toInt().coerceAtMost(bmp.height)
+        val sx = (bmp.width - sw) / 2
+        val sy = (bmp.height - sh) / 2
+        picSrc.set(sx, sy, sx + sw, sy + sh)
+        picDst.set(0f, 0f, w, h)
+        picPaint.alpha = (255 * alpha).toInt()
+        c.drawBitmap(bmp, picSrc, picDst, picPaint)
+        c.drawColor(Color.argb((80 * alpha).toInt(), 0, 0, 0))
+    }
+
     fun closeOverlay() {
         overlay = null
         invalidate()
@@ -293,6 +413,7 @@ class XmbView(context: Context) : View(context) {
         updateMetrics()
 
         bg.draw(c, width, height, unit, orient, time)
+        drawPicture(c)
         if (categories.isNotEmpty()) {
             drawItems(c)
             drawCategories(c)
@@ -337,6 +458,7 @@ class XmbView(context: Context) : View(context) {
         if (abs(od) > 0.001f) { orient += od * (1f - exp(-dt * 8f)); moving = true } else orient = want
 
         if (bg.step(dt)) moving = true
+        if (stepHover(dt)) moving = true
 
         if (flash > 0f) { flash = max(0f, flash - dt * 3f); moving = true }
 

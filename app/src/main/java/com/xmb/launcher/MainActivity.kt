@@ -32,6 +32,11 @@ class MainActivity : Activity(), XmbView.Listener {
     private var soundItem: XmbItem? = null
     private var lockItem: XmbItem? = null
     private var padItem: XmbItem? = null
+    private var musicItem: XmbItem? = null
+    private var musicVolItem: XmbItem? = null
+    private lateinit var media: AppMedia
+    private lateinit var music: XmbMusic
+    private var pendingKey: String? = null
 
     /** Подключение / отключение геймпада. */
     private val inputListener = object : android.hardware.input.InputManager.InputDeviceListener {
@@ -75,6 +80,12 @@ class MainActivity : Activity(), XmbView.Listener {
         xmb.setTheme(XmbTheme.ALL[themeIndex], animate = false)
         xmb.setAutoTheme(autoTheme)
         xmb.padStyle = prefs.getInt(PREF_PAD_STYLE, PadIcons.STYLE_PS)
+
+        media = AppMedia(this)
+        music = XmbMusic()
+        music.level = prefs.getInt(PREF_MUSIC_LEVEL, 2)
+        music.setGlobal(media.globalMusic())
+        xmb.backgroundProvider = { item, landscape -> item.key?.let { media.background(it, landscape) } }
         xmb.initialCategoryId = prefs.getString(PREF_CATEGORY, "game")
         xmb.setOnApplyWindowInsetsListener { _, insets ->
             xmb.applyInsets(insets)
@@ -102,12 +113,14 @@ class MainActivity : Activity(), XmbView.Listener {
         } catch (_: Exception) { }
         handler.removeCallbacks(reloadRunnable)
         sounds.release()
+        music.release()
         super.onDestroy()
     }
 
     override fun onResume() {
         super.onResume()
         sounds.start()
+        music.resume()
         LockController.start(this)
         if (reopenLockSetup) {
             // Вернулись из системных настроек — показываем обновлённый список разрешений
@@ -118,6 +131,7 @@ class MainActivity : Activity(), XmbView.Listener {
 
     override fun onPause() {
         sounds.stopSoon()
+        music.pause()
         super.onPause()
     }
 
@@ -229,6 +243,19 @@ class MainActivity : Activity(), XmbView.Listener {
         )
         padItem = pad
 
+        val bgMusic = XmbItem(
+            "Фоновая музыка", musicSubtitle(),
+            glyph = Glyph.MUSIC,
+            onClick = { it.openGlobalMusicMenu() }
+        )
+        musicItem = bgMusic
+        val musicVol = XmbItem(
+            "Громкость музыки", "Громкость: ${XmbMusic.LEVEL_NAMES[music.level]}",
+            glyph = Glyph.SOUND,
+            onClick = { it.openMusicVolumePicker() }
+        )
+        musicVolItem = musicVol
+
         val settings = listOf(
             settingsItem("Сеть Wi‑Fi", "Подключение к беспроводным сетям", Glyph.WIFI,
                 Intent(Settings.ACTION_WIFI_SETTINGS)),
@@ -241,6 +268,8 @@ class MainActivity : Activity(), XmbView.Listener {
             theme,
             sound,
             pad,
+            bgMusic,
+            musicVol,
             lock,
             settingsItem("Рабочий стол по умолчанию", "Выбрать, какой рабочий стол открывается кнопкой «Домой»", Glyph.HOME,
                 Intent(Settings.ACTION_HOME_SETTINGS),
@@ -392,6 +421,107 @@ class MainActivity : Activity(), XmbView.Listener {
     override fun onOpenSearch() = openSearch()
 
     // =====================================================================
+    // Фон и музыка приложений (как PIC1 и SND0 на PS3), общая фоновая музыка
+    // =====================================================================
+
+    /** Задержались на приложении — играет его мелодия (если есть), иначе общая. */
+    override fun onHover(item: XmbItem?) {
+        music.setHover(item?.key?.let { media.music(it) })
+    }
+
+    private fun musicSubtitle() = if (media.globalMusic() != null) "Своя мелодия" else "Не выбрана"
+
+    fun openGlobalMusicMenu() {
+        val has = media.globalMusic() != null
+        val options = ArrayList<String>()
+        options += if (has) "Заменить MP3" else "Выбрать MP3"
+        if (has) options += "Убрать музыку"
+        xmb.showOverlay(
+            DialogOverlay("Фоновая музыка", "Играет на рабочем столе XMB. Мелодия приложения на время её заменяет.", options) { pick ->
+                if (pick == 0) pickFile(REQ_GLOBAL_MUSIC, null, "audio/*")
+                else {
+                    media.removeGlobalMusic()
+                    music.setGlobal(null)
+                    musicItem?.subtitle = musicSubtitle()
+                }
+            }
+        )
+    }
+
+    fun openMusicVolumePicker() {
+        val original = music.level
+        xmb.showRoulette(
+            XmbMusic.LEVEL_NAMES, original,
+            onChange = { music.level = it },
+            onDone = {
+                music.level = it
+                prefs.edit().putInt(PREF_MUSIC_LEVEL, it).apply()
+                musicVolItem?.subtitle = "Громкость: ${XmbMusic.LEVEL_NAMES[it]}"
+            },
+            onCancel = { music.level = original },
+        )
+    }
+
+    private fun pickFile(request: Int, key: String?, mime: String) {
+        pendingKey = key
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType(mime)
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(i, request)
+        } catch (_: Exception) {
+            try {
+                @Suppress("DEPRECATION")
+                startActivityForResult(Intent(Intent.ACTION_GET_CONTENT).setType(mime), request)
+            } catch (_: Exception) {
+                Toast.makeText(this, "Не удалось открыть выбор файла", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+        val uri = data?.data
+        if (resultCode != RESULT_OK || uri == null) return
+        val key = pendingKey
+        Toast.makeText(this, "Сохраняю…", Toast.LENGTH_SHORT).show()
+        Thread {
+            val ok = when (requestCode) {
+                REQ_BG -> key != null && media.saveBackground(uri, key, landscape = false)
+                REQ_BG_LAND -> key != null && media.saveBackground(uri, key, landscape = true)
+                REQ_APP_MUSIC -> key != null && media.saveMusic(uri, key)
+                REQ_GLOBAL_MUSIC -> media.saveMusic(uri, null)
+                else -> false
+            }
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                if (!ok) {
+                    Toast.makeText(this, "Не удалось сохранить файл", Toast.LENGTH_SHORT).show()
+                    return@runOnUiThread
+                }
+                when (requestCode) {
+                    REQ_GLOBAL_MUSIC -> {
+                        music.setGlobal(media.globalMusic())
+                        musicItem?.subtitle = musicSubtitle()
+                        Toast.makeText(this, "Фоновая музыка установлена", Toast.LENGTH_SHORT).show()
+                    }
+                    REQ_APP_MUSIC -> {
+                        Toast.makeText(this, "Музыка назначена — задержитесь на приложении", Toast.LENGTH_SHORT).show()
+                        xmb.refreshHover()
+                    }
+                    else -> {
+                        Toast.makeText(this, "Фон назначен — задержитесь на приложении", Toast.LENGTH_SHORT).show()
+                        xmb.refreshHover()
+                    }
+                }
+            }
+        }.start()
+    }
+
+    // =====================================================================
     // Экран блокировки
     // =====================================================================
 
@@ -523,6 +653,31 @@ class MainActivity : Activity(), XmbView.Listener {
             refreshMenu()
             back?.invoke()
         }
+        options += if (media.hasBackground(key)) "Заменить фон" else "Выбрать фон"
+        actions += { pickFile(REQ_BG, key, "image/*") }
+        options += "Отдельный фон для горизонтального режима"
+        actions += { pickFile(REQ_BG_LAND, key, "image/*") }
+        if (media.hasBackground(key)) {
+            options += "Убрать фон"
+            actions += {
+                sounds.ok()
+                media.removeBackground(key)
+                xmb.refreshHover()
+                back?.invoke()
+            }
+        }
+        options += if (media.music(key) != null) "Заменить музыку (MP3)" else "Выбрать музыку (MP3)"
+        actions += { pickFile(REQ_APP_MUSIC, key, "audio/*") }
+        if (media.music(key) != null) {
+            options += "Убрать музыку"
+            actions += {
+                sounds.ok()
+                media.removeMusic(key)
+                music.setHover(null)
+                xmb.refreshHover()
+                back?.invoke()
+            }
+        }
         options += "Удалить приложение"
         actions += {
             sounds.ok()
@@ -590,5 +745,10 @@ class MainActivity : Activity(), XmbView.Listener {
         private const val PREF_SOUND_LEVEL = "sound_level"
         private const val PREF_FAVORITES = "favorites"
         private const val PREF_PAD_STYLE = "pad_style"
+        private const val PREF_MUSIC_LEVEL = "music_level"
+        private const val REQ_BG = 101
+        private const val REQ_BG_LAND = 102
+        private const val REQ_APP_MUSIC = 103
+        private const val REQ_GLOBAL_MUSIC = 104
     }
 }
