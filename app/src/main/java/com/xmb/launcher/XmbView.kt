@@ -91,17 +91,10 @@ class XmbView(context: Context) : View(context) {
     private var pItemBeforeX = 0f
     private var pItemSp = 0f
 
-    // ---------- цвета темы ----------
-    private val targetColors = IntArray(3)
-    private val curColors = FloatArray(9)
-    private var shaderColors = IntArray(3)
-    private var shaderH = -1
+    /** Фон: цвет темы, волны, искры. */
+    private val bg = XmbBackground()
 
     // ---------- кисти ----------
-    private val bgPaint = Paint()
-    private val bandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.WHITE }
-    private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.WHITE }
-    private val sparkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
     private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         shader = RadialGradient(
@@ -124,18 +117,6 @@ class XmbView(context: Context) : View(context) {
         typeface = Typeface.create("sans-serif", style)
         setShadowLayer(6f, 0f, 1.5f, Color.argb(150, 0, 0, 0))
     }
-
-    // ---------- волны и искры ----------
-    private val waveTop = Array(3) { Path() }
-    private val waveBand = Array(3) { Path() }
-    private val waveSegs = 72
-    private val waveYs = FloatArray(waveSegs + 1)
-    private val sparkN = 70
-    private val rnd = Random(7)
-    private val sparkX = FloatArray(sparkN) { rnd.nextFloat() }
-    private val sparkY = FloatArray(sparkN) { rnd.nextFloat() - 0.5f }
-    private val sparkSpeed = FloatArray(sparkN) { 0.004f + rnd.nextFloat() * 0.018f }
-    private val sparkPhase = FloatArray(sparkN) { rnd.nextFloat() * 6.28f }
 
     // ---------- часы ----------
     private var clockSec = -1L
@@ -172,7 +153,6 @@ class XmbView(context: Context) : View(context) {
     var sounds: XmbSounds? = null
     private var overlay: Overlay? = null
     private val frame = Frame()
-    private var autoTheme = false
     private var lastCatIdx = Int.MIN_VALUE
     private var lastItemKey = Int.MIN_VALUE
 
@@ -220,7 +200,7 @@ class XmbView(context: Context) : View(context) {
 
     /** Режим «Переливающийся»: раз в 2 минуты фон плавно (1 минуту) переходит к следующему цвету. */
     fun setAutoTheme(on: Boolean) {
-        autoTheme = on
+        bg.autoTheme = on
         invalidate()
     }
 
@@ -257,12 +237,7 @@ class XmbView(context: Context) : View(context) {
     }
 
     fun setTheme(theme: XmbTheme, animate: Boolean) {
-        targetColors[0] = theme.top
-        targetColors[1] = theme.mid
-        targetColors[2] = theme.bottom
-        if (!animate) {
-            for (i in 0 until 3) for (ch in 0 until 3) curColors[i * 3 + ch] = channel(targetColors[i], ch).toFloat()
-        }
+        bg.setTheme(theme, animate)
         invalidate()
     }
 
@@ -312,8 +287,7 @@ class XmbView(context: Context) : View(context) {
         val moving = step(dt)
         updateMetrics()
 
-        drawBackground(c)
-        drawWaves(c)
+        bg.draw(c, width, height, unit, orient, time)
         if (categories.isNotEmpty()) {
             drawItems(c)
             drawCategories(c)
@@ -356,13 +330,7 @@ class XmbView(context: Context) : View(context) {
         val od = want - orient
         if (abs(od) > 0.001f) { orient += od * (1f - exp(-dt * 8f)); moving = true } else orient = want
 
-        if (autoTheme) applyAutoColors()
-        val kc = 1f - exp(-dt * 3f)
-        for (i in 0 until 3) for (ch in 0 until 3) {
-            val idx = i * 3 + ch
-            val d = channel(targetColors[i], ch) - curColors[idx]
-            if (abs(d) > 0.5f) { curColors[idx] += d * kc; moving = true } else curColors[idx] = channel(targetColors[i], ch).toFloat()
-        }
+        if (bg.step(dt)) moving = true
 
         if (flash > 0f) { flash = max(0f, flash - dt * 3f); moving = true }
 
@@ -384,28 +352,6 @@ class XmbView(context: Context) : View(context) {
         }
         return moving
     }
-
-    private fun applyAutoColors() {
-        val list = XmbTheme.CYCLE
-        val period = 120_000L
-        val now = System.currentTimeMillis()
-        val idx = now / period
-        val sec = (now % period) / 1000f
-        val n = list.size
-        val from = list[(((idx - 1) % n + n) % n).toInt()]
-        val to = list[(idx % n).toInt()]
-        val x = (sec / 60f).coerceIn(0f, 1f)
-        val f = x * x * (3f - 2f * x)
-        targetColors[0] = lerpColor(from.top, to.top, f)
-        targetColors[1] = lerpColor(from.mid, to.mid, f)
-        targetColors[2] = lerpColor(from.bottom, to.bottom, f)
-    }
-
-    private fun lerpColor(a: Int, b: Int, f: Float) = Color.rgb(
-        (Color.red(a) + (Color.red(b) - Color.red(a)) * f).toInt(),
-        (Color.green(a) + (Color.green(b) - Color.green(a)) * f).toInt(),
-        (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * f).toInt(),
-    )
 
     private fun updateMetrics() {
         val w = width.toFloat()
@@ -429,76 +375,6 @@ class XmbView(context: Context) : View(context) {
         pItemSelX = pAnchorX + unit * 0.30f
         pItemBeforeX = pAnchorX - unit * 0.16f
         pItemSp = unit * 0.17f
-    }
-
-    private fun drawBackground(c: Canvas) {
-        val cols = IntArray(3) { Color.rgb(curColors[it * 3].toInt(), curColors[it * 3 + 1].toInt(), curColors[it * 3 + 2].toInt()) }
-        if (!cols.contentEquals(shaderColors) || shaderH != height) {
-            shaderColors = cols
-            shaderH = height
-            bgPaint.shader = LinearGradient(
-                0f, 0f, 0f, height.toFloat(), cols, floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP
-            )
-        }
-        c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
-    }
-
-    /**
-     * Волны и искры рисуются в своей системе координат:
-     * горизонтально — поперёк экрана, как на PS3;
-     * вертикально — вдоль длинной стороны экрана, наклонены примерно на 20° от вертикали
-     * (снизу-слева вверх-вправо) и не сплюснуты. При повороте наклон меняется плавно.
-     */
-    private fun drawWaves(c: Canvas) {
-        val w = width.toFloat()
-        val h = height.toFloat()
-        if (w <= 0f || h <= 0f) return
-        val cross = lerp(h, w, orient)          // ширина «полосы», в которой гуляют волны
-        val len = lerp(w, h, orient)            // длина экрана вдоль волн — задаёт число изгибов
-        val span = hypot(w, h) * 1.15f          // рисуем с запасом, чтобы концы не были видны
-        val ampScale = lerp(1f, 1.7f, orient)
-        val cx = w * 0.5f
-        val cy = lerp(h * 0.60f, h * 0.50f, orient)
-
-        c.save()
-        c.translate(cx, cy)
-        c.rotate(-70f * orient)
-
-        linePaint.strokeWidth = max(1.5f, unit * 0.0025f)
-        for (k in 0 until 3) {
-            val top = waveTop[k]
-            val band = waveBand[k]
-            top.rewind(); band.rewind()
-            val amp = cross * (0.045f + 0.018f * k) * ampScale
-            val f1 = (1.1f + 0.4f * k) * 2f * PI.toFloat() / len
-            val ph = time * (0.22f + 0.07f * k) + k * 1.9f
-            for (s in 0..waveSegs) {
-                val x = -span / 2f + span * s / waveSegs
-                val y = k * cross * 0.012f + amp * sin(x * f1 + ph) + amp * 0.35f * sin(x * f1 * 0.47f - ph * 1.4f)
-                waveYs[s] = y
-                if (s == 0) { top.moveTo(x, y); band.moveTo(x, y) } else { top.lineTo(x, y); band.lineTo(x, y) }
-            }
-            for (s in waveSegs downTo 0) {
-                val x = -span / 2f + span * s / waveSegs
-                val th = cross * 0.022f * ampScale * (1.2f + sin(x * f1 * 0.8f + ph * 0.7f + k))
-                band.lineTo(x, waveYs[s] + th)
-            }
-            band.close()
-            bandPaint.alpha = 24 - k * 5
-            c.drawPath(band, bandPaint)
-            linePaint.alpha = 80 - k * 18
-            c.drawPath(top, linePaint)
-        }
-
-        // Искры вокруг волн
-        for (i in 0 until sparkN) {
-            val x = ((sparkX[i] + time * sparkSpeed[i]) % 1f) * span - span / 2f
-            val y = sparkY[i] * cross * 0.30f * ampScale
-            val a = 0.5f + 0.5f * sin(time * 2.2f + sparkPhase[i])
-            sparkPaint.alpha = (25 + 120 * a).toInt()
-            c.drawCircle(x, y, unit * (0.0015f + 0.0012f * (i % 3)), sparkPaint)
-        }
-        c.restore()
     }
 
     private fun drawItems(c: Canvas) {
@@ -861,11 +737,6 @@ class XmbView(context: Context) : View(context) {
 
     private fun lerp(a: Float, b: Float, f: Float) = a + (b - a) * f
 
-    private fun channel(color: Int, ch: Int): Int = when (ch) {
-        0 -> Color.red(color)
-        1 -> Color.green(color)
-        else -> Color.blue(color)
-    }
 
     companion object {
         private const val AXIS_NONE = 0

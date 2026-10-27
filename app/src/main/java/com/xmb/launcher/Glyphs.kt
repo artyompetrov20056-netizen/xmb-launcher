@@ -12,7 +12,8 @@ import kotlin.math.sin
 enum class Glyph {
     SETTINGS, PHOTO, MUSIC, VIDEO, GAME, NETWORK, APPS,
     WIFI, BLUETOOTH, DISPLAY, SOUND, PALETTE, HOME, GEAR, INFO, EMPTY,
-    FAVORITE, SEARCH
+    FAVORITE, SEARCH, LOCK,
+    TORCH, PLAY, PAUSE, PREV, NEXT
 }
 
 /**
@@ -184,6 +185,43 @@ object Glyphs {
                 c.drawCircle(-0.08f, -0.08f, 0.25f, stroke)
                 stroke.strokeWidth = 0.11f
                 c.drawLine(0.11f, 0.11f, 0.38f, 0.38f, stroke)
+            }
+            Glyph.LOCK -> { // замок
+                rr(c, -0.30f, -0.06f, 0.30f, 0.38f, 0.06f, stroke)
+                r.set(-0.19f, -0.40f, 0.19f, 0.02f)
+                c.drawArc(r, 180f, 180f, false, stroke)
+                c.drawLine(-0.19f, -0.19f, -0.19f, -0.06f, stroke)
+                c.drawLine(0.19f, -0.19f, 0.19f, -0.06f, stroke)
+                c.drawCircle(0f, 0.14f, 0.05f, fill)
+            }
+            Glyph.TORCH -> { // фонарик
+                path.rewind()
+                path.moveTo(-0.22f, -0.40f); path.lineTo(0.22f, -0.40f)
+                path.lineTo(0.13f, -0.14f); path.lineTo(-0.13f, -0.14f); path.close()
+                c.drawPath(path, stroke)
+                rr(c, -0.12f, -0.14f, 0.12f, 0.40f, 0.04f, stroke)
+                c.drawCircle(0f, 0.05f, 0.04f, fill)
+            }
+            Glyph.PLAY -> {
+                path.rewind()
+                path.moveTo(-0.20f, -0.30f); path.lineTo(0.30f, 0f); path.lineTo(-0.20f, 0.30f); path.close()
+                c.drawPath(path, fill)
+            }
+            Glyph.PAUSE -> {
+                rr(c, -0.22f, -0.30f, -0.06f, 0.30f, 0.03f, fill)
+                rr(c, 0.06f, -0.30f, 0.22f, 0.30f, 0.03f, fill)
+            }
+            Glyph.PREV -> {
+                rr(c, -0.34f, -0.28f, -0.24f, 0.28f, 0.02f, fill)
+                path.rewind()
+                path.moveTo(0.30f, -0.30f); path.lineTo(-0.20f, 0f); path.lineTo(0.30f, 0.30f); path.close()
+                c.drawPath(path, fill)
+            }
+            Glyph.NEXT -> {
+                rr(c, 0.24f, -0.28f, 0.34f, 0.28f, 0.02f, fill)
+                path.rewind()
+                path.moveTo(-0.30f, -0.30f); path.lineTo(0.20f, 0f); path.lineTo(-0.30f, 0.30f); path.close()
+                c.drawPath(path, fill)
             }
             Glyph.EMPTY -> {
                 c.drawCircle(0f, 0f, 0.30f, stroke)

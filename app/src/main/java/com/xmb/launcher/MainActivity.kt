@@ -30,6 +30,8 @@ class MainActivity : Activity(), XmbView.Listener {
     private var autoTheme = false
     private var themeItem: XmbItem? = null
     private var soundItem: XmbItem? = null
+    private var lockItem: XmbItem? = null
+    private var reopenLockSetup = false
     private var apps: List<AppEntry>? = null
     private val favorites = LinkedHashSet<String>()
     private var loadGeneration = 0
@@ -77,6 +79,7 @@ class MainActivity : Activity(), XmbView.Listener {
 
         try { launcherApps.registerCallback(appsCallback) } catch (_: Exception) { }
         reloadApps()
+        LockController.start(this)
     }
 
     override fun onDestroy() {
@@ -89,6 +92,12 @@ class MainActivity : Activity(), XmbView.Listener {
     override fun onResume() {
         super.onResume()
         sounds.start()
+        LockController.start(this)
+        if (reopenLockSetup) {
+            // Вернулись из системных настроек — показываем обновлённый список разрешений
+            reopenLockSetup = false
+            handler.postDelayed({ openLockPermissions() }, 350)
+        }
     }
 
     override fun onPause() {
@@ -190,6 +199,13 @@ class MainActivity : Activity(), XmbView.Listener {
         )
         soundItem = sound
 
+        val lock = XmbItem(
+            "Экран блокировки XMB", lockSubtitle(),
+            glyph = Glyph.LOCK,
+            onClick = { it.openLockMenu() }
+        )
+        lockItem = lock
+
         val settings = listOf(
             settingsItem("Сеть Wi‑Fi", "Подключение к беспроводным сетям", Glyph.WIFI,
                 Intent(Settings.ACTION_WIFI_SETTINGS)),
@@ -201,6 +217,7 @@ class MainActivity : Activity(), XmbView.Listener {
                 Intent(Settings.ACTION_SOUND_SETTINGS)),
             theme,
             sound,
+            lock,
             settingsItem("Рабочий стол по умолчанию", "Выбрать, какой рабочий стол открывается кнопкой «Домой»", Glyph.HOME,
                 Intent(Settings.ACTION_HOME_SETTINGS),
                 Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)),
@@ -311,6 +328,105 @@ class MainActivity : Activity(), XmbView.Listener {
                 soundItem?.subtitle = soundSubtitle()
             },
             onCancel = { sounds.level = original },
+        )
+    }
+
+    // =====================================================================
+    // Экран блокировки
+    // =====================================================================
+
+    private fun lockSubtitle() = if (LockController.isEnabled(this)) "Включён" else "Выключен"
+
+    fun openLockMenu() {
+        val on = LockController.isEnabled(this)
+        xmb.showOverlay(
+            DialogOverlay(
+                "Экран блокировки XMB",
+                "Показывается поверх системного. Пароль или отпечаток вводится один раз — в системном окне после свайпа вверх.",
+                listOf(if (on) "Выключить" else "Включить", "Разрешения", "Посмотреть, как выглядит")
+            ) { pick ->
+                when (pick) {
+                    0 -> if (on) {
+                        LockController.setEnabled(this, false)
+                        Toast.makeText(this, "Экран блокировки XMB выключен", Toast.LENGTH_SHORT).show()
+                    } else {
+                        enableLock()
+                    }
+                    1 -> openLockPermissions()
+                    2 -> startSafe(Intent(this, LockActivity::class.java))
+                }
+                lockItem?.subtitle = lockSubtitle()
+            }
+        )
+    }
+
+    private fun enableLock() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
+        LockController.setEnabled(this, true)
+        lockItem?.subtitle = lockSubtitle()
+        Toast.makeText(this, "Экран блокировки XMB включён", Toast.LENGTH_SHORT).show()
+        if (!Settings.canDrawOverlays(this) || !LockNotificationService.isEnabled(this)) {
+            handler.postDelayed({ openLockPermissions() }, 400)
+        }
+    }
+
+    private fun isXiaomi(): Boolean {
+        val m = (Build.MANUFACTURER + " " + Build.BRAND).lowercase()
+        return "xiaomi" in m || "redmi" in m || "poco" in m
+    }
+
+    /** Пошаговая выдача разрешений. ✓ — уже выдано. */
+    fun openLockPermissions() {
+        fun mark(ok: Boolean) = if (ok) "✓  " else "○  "
+        val overlay = Settings.canDrawOverlays(this)
+        val notif = LockNotificationService.isEnabled(this)
+        val options = ArrayList<String>()
+        val actions = ArrayList<() -> Unit>()
+
+        options += mark(overlay) + "Поверх других приложений"
+        actions += {
+            startSafe(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+        }
+        options += mark(notif) + "Доступ к уведомлениям"
+        actions += {
+            val list = ArrayList<Intent>()
+            if (Build.VERSION.SDK_INT >= 30) {
+                list += Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
+                    .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, LockNotificationService.component(this).flattenToString())
+            }
+            list += Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+            startSafe(*list.toTypedArray())
+        }
+        if (isXiaomi()) {
+            options += "Xiaomi: «Экран блокировки» и «Всплывающие окна»"
+            actions += {
+                startSafe(
+                    Intent("miui.intent.action.APP_PERM_EDITOR")
+                        .setClassName("com.miui.securitycenter", "com.miui.permcenter.permissions.PermissionsEditorActivity")
+                        .putExtra("extra_pkgname", packageName),
+                    Intent("miui.intent.action.APP_PERM_EDITOR").putExtra("extra_pkgname", packageName),
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+                )
+            }
+        }
+        options += "Автозапуск и батарея без ограничений"
+        actions += {
+            startSafe(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+        }
+
+        xmb.showOverlay(
+            DialogOverlay(
+                "Разрешения", 
+                "Выдайте по очереди. Если «Доступ к уведомлениям» не включается: О приложении → ⋮ → «Разрешить ограниченные настройки».",
+                options
+            ) { pick ->
+                reopenLockSetup = true
+                actions[pick]()
+            }
         )
     }
 
