@@ -54,6 +54,8 @@ class MainActivity : Activity(), XmbView.Listener {
         autoTheme = prefs.getBoolean(PREF_THEME_AUTO, false)
         prefs.getString(PREF_FAVORITES, "")!!.split('\n').filter { it.isNotBlank() }.forEach { favorites += it }
 
+        // Кнопки громкости на рабочем столе регулируют медиа — через этот поток идут звуки меню
+        volumeControlStream = android.media.AudioManager.STREAM_MUSIC
         sounds = XmbSounds(this)
         sounds.level = prefs.getInt(PREF_SOUND_LEVEL, if (prefs.getBoolean(PREF_SOUND, true)) 2 else 0)
 
