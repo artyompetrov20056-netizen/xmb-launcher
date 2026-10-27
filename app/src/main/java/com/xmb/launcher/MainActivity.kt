@@ -24,7 +24,8 @@ class MainActivity : Activity(), XmbView.Listener {
 
     private lateinit var xmb: XmbView
     private lateinit var prefs: SharedPreferences
-    private lateinit var sounds: XmbSounds
+    lateinit var sounds: XmbSounds
+        private set
     private var themeIndex = 0
     private var autoTheme = false
     private var themeItem: XmbItem? = null
@@ -54,7 +55,7 @@ class MainActivity : Activity(), XmbView.Listener {
         prefs.getString(PREF_FAVORITES, "")!!.split('\n').filter { it.isNotBlank() }.forEach { favorites += it }
 
         sounds = XmbSounds(this)
-        sounds.enabled = prefs.getBoolean(PREF_SOUND, true)
+        sounds.level = prefs.getInt(PREF_SOUND_LEVEL, if (prefs.getBoolean(PREF_SOUND, true)) 2 else 0)
 
         xmb = XmbView(this)
         xmb.listener = this
@@ -173,7 +174,7 @@ class MainActivity : Activity(), XmbView.Listener {
         val sound = XmbItem(
             "Звук меню", soundSubtitle(),
             glyph = Glyph.SOUND,
-            onClick = { it.toggleSound() }
+            onClick = { it.openSoundPicker() }
         )
         soundItem = sound
 
@@ -236,6 +237,7 @@ class MainActivity : Activity(), XmbView.Listener {
         packageName = e.component.packageName,
         key = e.component.flattenToString(),
         onClick = { act ->
+            act.sounds.launch()
             val intent = Intent(Intent.ACTION_MAIN)
                 .addCategory(Intent.CATEGORY_LAUNCHER)
                 .setComponent(e.component)
@@ -283,18 +285,65 @@ class MainActivity : Activity(), XmbView.Listener {
         })
     }
 
-    private fun soundSubtitle() = if (sounds.enabled) "Включён · нажмите, чтобы выключить" else "Выключен · нажмите, чтобы включить"
+    private fun soundSubtitle() = "Громкость: ${XmbSounds.LEVEL_NAMES[sounds.level]}"
 
-    fun toggleSound() {
-        sounds.enabled = !sounds.enabled
-        prefs.edit().putBoolean(PREF_SOUND, sounds.enabled).apply()
-        if (sounds.enabled) sounds.ok()
-        soundItem?.subtitle = soundSubtitle()
+    /** Громкость звуков меню — рулеткой: Выключен / Минимальная / Средняя / Высокая. */
+    fun openSoundPicker() {
+        val original = sounds.level
+        xmb.showRoulette(
+            XmbSounds.LEVEL_NAMES, original,
+            onChange = { sounds.level = it },
+            onDone = {
+                sounds.level = it
+                prefs.edit().putInt(PREF_SOUND_LEVEL, it).apply()
+                soundItem?.subtitle = soundSubtitle()
+            },
+            onCancel = { sounds.level = original },
+        )
     }
 
+    /** Поиск: выбранное приложение не запускается сразу, а открывает меню действий. */
     fun openSearch() {
         val all = apps?.map { appItem(it) } ?: emptyList()
-        xmb.showOverlay(SearchOverlay(all) { item -> item.onClick?.invoke(this) })
+        lateinit var search: SearchOverlay
+        search = SearchOverlay(all) { item ->
+            showAppActions(item, withOpen = true, back = { xmb.showOverlay(search) })
+        }
+        xmb.showOverlay(search)
+    }
+
+    /**
+     * Меню действий с приложением: (Открыть), Добавить/Убрать из избранного, Удалить.
+     * back — куда вернуться после отмены или после изменения избранного (например, в поиск).
+     */
+    private fun showAppActions(item: XmbItem, withOpen: Boolean, back: (() -> Unit)?) {
+        val key = item.key ?: return
+        val pkg = item.packageName ?: return
+        val isFav = key in favorites
+        val options = ArrayList<String>()
+        val actions = ArrayList<() -> Unit>()
+        if (withOpen) {
+            options += "Открыть"
+            actions += { item.onClick?.invoke(this) }
+        }
+        options += if (isFav) "Убрать из избранного" else "Добавить в избранное"
+        actions += {
+            sounds.ok()
+            if (isFav) favorites.remove(key) else favorites.add(key)
+            prefs.edit().putString(PREF_FAVORITES, favorites.joinToString("\n")).apply()
+            Toast.makeText(this, if (isFav) "Убрано из избранного" else "Добавлено в избранное", Toast.LENGTH_SHORT).show()
+            refreshMenu()
+            back?.invoke()
+        }
+        options += "Удалить приложение"
+        actions += {
+            sounds.ok()
+            startSafe(
+                Intent(Intent.ACTION_DELETE, Uri.parse("package:$pkg")),
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg"))
+            )
+        }
+        xmb.showOverlay(DialogOverlay(item.title, null, options, pickSound = false, onCancel = back) { actions[it]() })
     }
 
     fun confirmExit() {
@@ -336,34 +385,9 @@ class MainActivity : Activity(), XmbView.Listener {
         item.onClick?.invoke(this)
     }
 
-    /** Удержание приложения — меню: избранное / удалить. */
+    /** Удержание приложения — меню: добавить/убрать из избранного, удалить. */
     override fun onItemLongPress(item: XmbItem) {
-        val key = item.key ?: return
-        val pkg = item.packageName ?: return
-        val isFav = key in favorites
-        xmb.showOverlay(
-            DialogOverlay(
-                item.title, null,
-                listOf(if (isFav) "Убрать из избранного" else "Добавить в избранное", "Удалить приложение")
-            ) { pick ->
-                when (pick) {
-                    0 -> {
-                        if (isFav) favorites.remove(key) else favorites.add(key)
-                        prefs.edit().putString(PREF_FAVORITES, favorites.joinToString("\n")).apply()
-                        Toast.makeText(
-                            this,
-                            if (isFav) "Убрано из избранного" else "Добавлено в избранное",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                        refreshMenu()
-                    }
-                    1 -> startSafe(
-                        Intent(Intent.ACTION_DELETE, Uri.parse("package:$pkg")),
-                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg"))
-                    )
-                }
-            }
-        )
+        showAppActions(item, withOpen = false, back = null)
     }
 
     override fun onCategorySelected(category: XmbCategory) {
@@ -375,6 +399,7 @@ class MainActivity : Activity(), XmbView.Listener {
         private const val PREF_THEME_AUTO = "theme_auto"
         private const val PREF_CATEGORY = "category"
         private const val PREF_SOUND = "sound"
+        private const val PREF_SOUND_LEVEL = "sound_level"
         private const val PREF_FAVORITES = "favorites"
     }
 }

@@ -30,6 +30,7 @@ class Frame {
 interface OverlayHost {
     fun closeOverlay()
     fun playTick()
+    fun playKey()
     fun playOk()
     fun playBack()
 }
@@ -90,6 +91,10 @@ class DialogOverlay(
     private val options: List<String>,
     private var selected: Int = 0,
     private val checked: Int = -1,
+    /** false — звук выбора проиграет сам вызывающий код (например, звук запуска приложения). */
+    private val pickSound: Boolean = true,
+    /** Вызывается при отмене («Назад» или нажатие мимо окна). */
+    private val onCancel: (() -> Unit)? = null,
     private val onPick: (Int) -> Unit,
 ) : Overlay() {
 
@@ -203,9 +208,15 @@ class DialogOverlay(
 
     private fun pick(i: Int) {
         selected = i
-        host.playOk()
+        if (pickSound) host.playOk()
         host.closeOverlay()
         onPick(i)
+    }
+
+    override fun onBack() {
+        host.playBack()
+        host.closeOverlay()
+        onCancel?.invoke()
     }
 
     override fun onKey(keyCode: Int, event: KeyEvent): Boolean {
@@ -227,7 +238,8 @@ class DialogOverlay(
 /** Поиск приложений по названию с экранной клавиатурой в стиле PS3. */
 class SearchOverlay(
     private val apps: List<XmbItem>,
-    private val onLaunch: (XmbItem) -> Unit,
+    /** Выбрано приложение в результатах — показываем меню действий. */
+    private val onChoose: (XmbItem) -> Unit,
 ) : Overlay() {
 
     private class Key(val label: String, val kind: Int, val weight: Int, val ch: Char = ' ') {
@@ -442,14 +454,14 @@ class SearchOverlay(
             }
             K_CLOSE -> { onBack(); return }
         }
-        host.playTick()
+        host.playKey()
         updateResults()
     }
 
     private fun launch(item: XmbItem) {
         host.playOk()
         host.closeOverlay()
-        onLaunch(item)
+        onChoose(item)
     }
 
     private fun norm(s: String) = s.lowercase().replace('ё', 'е')
@@ -515,5 +527,178 @@ class SearchOverlay(
         private const val K_DEL = 2
         private const val K_LANG = 3
         private const val K_CLOSE = 4
+    }
+}
+
+// =========================================================================
+// Рулетка выбора значения (как в настройках PS3)
+// =========================================================================
+
+/**
+ * Вертикальная «рулетка» рядом с выбранным пунктом: значение в рамке,
+ * соседние значения выше и ниже, прокрутка по кругу.
+ * Свайп вверх/вниз крутит, нажатие на рамку (или мимо) — применить, «Назад» — отменить.
+ */
+class RouletteOverlay(
+    private val values: List<String>,
+    start: Int,
+    /** Где сейчас выбранный пункт меню (центр иконки). */
+    private val anchor: (android.graphics.PointF) -> Unit,
+    /** Значение в рамке поменялось (для предпросмотра). */
+    private val onChange: (Int) -> Unit,
+    private val onDone: (Int) -> Unit,
+    private val onCancel: () -> Unit,
+) : Overlay() {
+
+    private val n = values.size
+    private var pos = start.toFloat()
+    private var target = start
+    private var lastIdx = start
+    private var lastTime = -1f
+    private val p = android.graphics.PointF()
+    private var cx = 0f
+    private var cy = 0f
+    private var spacing = 1f
+    private val box = RectF()
+    private val panel = RectF()
+
+    private var dragging = false
+    private var downY = 0f
+    private var downX = 0f
+    private var dragStart = 0f
+    private var velocity: android.view.VelocityTracker? = null
+
+    private val dim = Paint().apply { color = Color.BLACK }
+    private val panelFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
+    private val boxFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val boxLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.WHITE }
+    private val textP = textPaint().apply { textAlign = Paint.Align.CENTER }
+
+    private fun wrapIdx(k: Int) = ((k % n) + n) % n
+
+    private fun layout(f: Frame) {
+        val u = f.unit
+        anchor(p)
+        spacing = u * 0.085f
+        if (f.portrait) {
+            cx = f.w - f.r - u * 0.27f
+            cy = p.y + u * 0.30f
+        } else {
+            cx = f.w - f.r - u * 0.32f
+            cy = p.y
+        }
+        cy = cy.coerceIn(f.t + spacing * 2.6f, f.h - f.b - spacing * 2.6f)
+        val bw = u * 0.42f
+        box.set(cx - bw / 2f, cy - spacing * 0.48f, cx + bw / 2f, cy + spacing * 0.48f)
+        panel.set(cx - bw / 2f - u * 0.02f, cy - spacing * 2.6f, cx + bw / 2f + u * 0.02f, cy + spacing * 2.6f)
+    }
+
+    override fun draw(c: Canvas, f: Frame, time: Float) {
+        val dt = if (lastTime < 0f) 0f else (time - lastTime).coerceIn(0f, 0.05f)
+        lastTime = time
+        if (!dragging) pos += (target - pos) * (1f - kotlin.math.exp(-dt * 16f))
+        checkChange()
+
+        layout(f)
+        val u = f.unit
+        dim.alpha = a(70f)
+        c.drawRect(0f, 0f, f.w, f.h, dim)
+        panelFill.alpha = a(110f)
+        c.drawRoundRect(panel, u * 0.02f, u * 0.02f, panelFill)
+
+        val base = floor(pos).toInt()
+        for (k in base - 2..base + 3) {
+            val off = k - pos
+            if (abs(off) > 2.4f) continue
+            val y = cy + off * spacing
+            val near = (1f - min(abs(off), 1f))
+            textP.textSize = u * (0.03f + 0.016f * near)
+            textP.alpha = a(255f * (1f - min(abs(off), 2.2f) * 0.38f))
+            c.drawText(values[wrapIdx(k)], cx, y + textP.textSize * 0.36f, textP)
+        }
+
+        boxFill.alpha = a(28f)
+        c.drawRoundRect(box, u * 0.012f, u * 0.012f, boxFill)
+        boxLine.strokeWidth = max(2f, u * 0.004f)
+        boxLine.alpha = a(240f)
+        c.drawRoundRect(box, u * 0.012f, u * 0.012f, boxLine)
+    }
+
+    private fun checkChange() {
+        val idx = wrapIdx(kotlin.math.round(pos).toInt())
+        if (idx != lastIdx) {
+            lastIdx = idx
+            onChange(idx)
+            host.playTick()
+        }
+    }
+
+    override fun onTouch(e: MotionEvent, f: Frame) {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                downX = e.x; downY = e.y
+                dragging = false
+                dragStart = pos
+                velocity?.recycle()
+                velocity = android.view.VelocityTracker.obtain().also { it.addMovement(e) }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                velocity?.addMovement(e)
+                if (!dragging && abs(e.y - downY) > f.unit * 0.02f) { dragging = true; dragStart = pos }
+                if (dragging) {
+                    pos = dragStart - (e.y - downY) / spacing
+                    checkChange()
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                if (dragging) {
+                    val vt = velocity
+                    vt?.addMovement(e)
+                    vt?.computeCurrentVelocity(1000)
+                    val v = vt?.yVelocity ?: 0f
+                    target = kotlin.math.round(pos - v * 0.12f / spacing).toInt()
+                    dragging = false
+                } else {
+                    when {
+                        box.contains(e.x, e.y) -> confirm()
+                        panel.contains(e.x, e.y) -> {
+                            val off = kotlin.math.round((e.y - cy) / spacing).toInt()
+                            target = kotlin.math.round(pos).toInt() + off
+                        }
+                        else -> confirm()
+                    }
+                }
+                velocity?.recycle(); velocity = null
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                dragging = false
+                target = kotlin.math.round(pos).toInt()
+            }
+        }
+    }
+
+    private fun confirm() {
+        val idx = wrapIdx(kotlin.math.round(target.toFloat()).toInt())
+        if (idx != lastIdx) onChange(idx)
+        host.playOk()
+        host.closeOverlay()
+        onDone(idx)
+    }
+
+    override fun onBack() {
+        host.closeOverlay()
+        onCancel()
+        host.playBack()
+    }
+
+    override fun onKey(keyCode: Int, event: KeyEvent): Boolean {
+        when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_UP -> target--
+            KeyEvent.KEYCODE_DPAD_DOWN -> target++
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_BUTTON_A -> confirm()
+            KeyEvent.KEYCODE_BUTTON_B -> onBack()
+            else -> return false
+        }
+        return true
     }
 }

@@ -159,7 +159,10 @@ class XmbView(context: Context) : View(context) {
         val hit = hitItem(downX, downY)
         if (hit >= 0) {
             categories.getOrNull(ci)?.items?.getOrNull(hit)?.let {
-                if (it.key != null) performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                if (it.key != null) {
+                    performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                    sounds?.hold()
+                }
                 listener?.onItemLongPress(it)
             }
         }
@@ -176,6 +179,7 @@ class XmbView(context: Context) : View(context) {
     private val overlayHost = object : OverlayHost {
         override fun closeOverlay() = this@XmbView.closeOverlay()
         override fun playTick() { sounds?.tick() }
+        override fun playKey() { sounds?.key() }
         override fun playOk() { sounds?.ok() }
         override fun playBack() { sounds?.back() }
     }
@@ -226,6 +230,18 @@ class XmbView(context: Context) : View(context) {
         o.host = overlayHost
         overlay = o
         invalidate()
+    }
+
+    /** Рулетка выбора значения рядом с выбранным пунктом меню. */
+    fun showRoulette(values: List<String>, start: Int, onChange: (Int) -> Unit, onDone: (Int) -> Unit, onCancel: () -> Unit) {
+        showOverlay(RouletteOverlay(values, start, { out -> selectedItemPoint(out) }, onChange, onDone, onCancel))
+    }
+
+    private fun selectedItemPoint(out: android.graphics.PointF) {
+        if (categories.isEmpty()) { out.set(width / 2f, height / 2f); return }
+        val ci = currentCat()
+        val d = itemTarget[ci] - itemPos[ci]
+        out.set(itemX(d), itemY(d))
     }
 
     fun closeOverlay() {
@@ -351,7 +367,8 @@ class XmbView(context: Context) : View(context) {
         if (flash > 0f) { flash = max(0f, flash - dt * 3f); moving = true }
 
         overlay?.let {
-            if (it.fade < 0.999f) { it.fade += (1f - it.fade) * (1f - exp(-dt * 12f)); moving = true } else it.fade = 1f
+            if (it.fade < 0.999f) it.fade += (1f - it.fade) * (1f - exp(-dt * 12f)) else it.fade = 1f
+            moving = true
         }
 
         // Щелчок при переходе на соседнюю категорию или пункт — как на PS3
@@ -792,7 +809,8 @@ class XmbView(context: Context) : View(context) {
 
     private fun activate(item: XmbItem) {
         flash = 1f
-        if (item.onClick != null) sounds?.ok()
+        // Для приложений звук запуска проигрывает MainActivity, для остального — звук выбора
+        if (item.onClick != null && item.key == null) sounds?.ok()
         listener?.onItemActivated(item)
         invalidate()
     }
