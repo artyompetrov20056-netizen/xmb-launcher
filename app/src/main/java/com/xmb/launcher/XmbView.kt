@@ -413,6 +413,7 @@ class XmbView(context: Context) : View(context) {
         updateMetrics()
 
         bg.draw(c, width, height, unit, orient, time)
+        VisualStyles.accent = bg.accent()
         drawPicture(c)
         if (categories.isNotEmpty()) {
             // наклон всего меню (стиль «Хром»)
@@ -573,13 +574,14 @@ class XmbView(context: Context) : View(context) {
     private fun glyphScale(base: Float) = when (bg.style.frame) {
         FrameKind.NONE -> base
         FrameKind.CHROME -> base * 1.12f
+        FrameKind.CRYSTAL -> base * 0.5f
         else -> base * 0.74f
     }
 
     /** Сила общего свечения выбранного пункта: в стилях с рамками оно слабее. */
     private fun glowScale() = when (bg.style.frame) {
         FrameKind.NONE, FrameKind.GLOW -> 1f
-        FrameKind.BUBBLE, FrameKind.CHROME -> 0.6f
+        FrameKind.BUBBLE, FrameKind.CHROME, FrameKind.CRYSTAL -> 0.6f
         else -> 0.35f
     }
 
@@ -593,7 +595,7 @@ class XmbView(context: Context) : View(context) {
 
     private fun drawIcon(c: Canvas, item: XmbItem, x: Float, y: Float, size: Float, alpha: Int, sel: Float = 0f) {
         val st = bg.style
-        VisualStyles.drawFrame(c, st, x, y, size * 0.8f, alpha, sel, time)
+        VisualStyles.drawFrame(c, st, x, y, size * 0.8f, alpha, sel, time, app = item.icon != null)
         val bmp = item.icon
         if (bmp != null) {
             val s = size * (if (st.frame == FrameKind.NONE || st.frame == FrameKind.GLOW) 0.46f else 0.40f)

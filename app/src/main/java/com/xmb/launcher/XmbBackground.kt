@@ -153,6 +153,9 @@ class XmbBackground {
         setTheme(XmbTheme.ALL[idx], animate = false)
     }
 
+    /** Основной цвет темы сейчас (с учётом плавных переходов). */
+    fun accent(): Int = Color.rgb(curColors[3].toInt(), curColors[4].toInt(), curColors[5].toInt())
+
     /** Плавное изменение цвета. Возвращает true, пока цвет меняется. */
     fun step(dt: Float): Boolean {
         var moving = false
@@ -196,6 +199,7 @@ class XmbBackground {
             Scene.CHROME -> drawChrome(c, w, h, unit, time)
             Scene.WEBCORE -> drawWebcore(c, w, h, unit, time)
             Scene.SNAKE -> drawSnake(c, w, h, unit, time)
+            Scene.CRYSTAL -> drawCrystalWorld(c, w, h, unit, time)
         }
     }
 
@@ -958,6 +962,159 @@ class XmbBackground {
             p.cubicTo(c1x, c1y, c2x, c2y, xs[i2], ys[i2])
         }
         p.close()
+    }
+
+    // ---------------- Кристаллы: космос над морем чужой планеты ----------------
+
+    private fun mixC(a: Int, b: Int, f: Float) = Color.rgb(
+        (Color.red(a) + (Color.red(b) - Color.red(a)) * f).toInt(),
+        (Color.green(a) + (Color.green(b) - Color.green(a)) * f).toInt(),
+        (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * f).toInt(),
+    )
+    private fun argb(a: Int, col: Int) = Color.argb(a.coerceIn(0, 255), Color.red(col), Color.green(col), Color.blue(col))
+    private val skyP = Paint()
+    private val seaP = Paint()
+    private val shoreP = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val crescentP = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val sunGlow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = RadialGradient(0f, 0f, 1f,
+            intArrayOf(Color.WHITE, Color.argb(200, 255, 255, 255), Color.argb(60, 220, 235, 255), Color.TRANSPARENT),
+            floatArrayOf(0f, 0.12f, 0.4f, 1f), Shader.TileMode.CLAMP)
+    }
+    private val planetPath = Path()
+    private val cutPath = Path()
+    private var worldAccent = 0
+    private var worldKey = 0L
+
+    private fun drawCrystalWorld(c: Canvas, w: Float, h: Float, unit: Float, time: Float) {
+        val acc = accent()
+        val horizon = h * (if (h > w) 0.58f else 0.60f)
+        val shoreY = h * (if (h > w) 0.84f else 0.86f)
+        val key = w.toLong() * 100000L + h.toLong()
+        if (acc != worldAccent || key != worldKey) {
+            worldAccent = acc
+            worldKey = key
+            val space = mixC(acc, Color.BLACK, 0.82f)
+            val skyMid = mixC(acc, Color.BLACK, 0.35f)
+            val skyLow = mixC(acc, Color.WHITE, 0.45f)
+            skyP.shader = LinearGradient(0f, 0f, 0f, horizon, intArrayOf(space, skyMid, skyLow), floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
+            seaP.shader = LinearGradient(0f, horizon, 0f, shoreY,
+                intArrayOf(mixC(acc, Color.WHITE, 0.55f), mixC(acc, Color.WHITE, 0.15f), mixC(acc, Color.BLACK, 0.25f)),
+                floatArrayOf(0f, 0.35f, 1f), Shader.TileMode.CLAMP)
+            shoreP.shader = LinearGradient(0f, shoreY, 0f, h,
+                intArrayOf(Color.rgb(250, 248, 244), Color.rgb(232, 226, 214)), null, Shader.TileMode.CLAMP)
+            crescentP.shader = LinearGradient(0f, -1f, 0f, 1f,
+                intArrayOf(Color.WHITE, mixC(acc, Color.WHITE, 0.8f), mixC(acc, Color.WHITE, 0.55f)), null, Shader.TileMode.CLAMP)
+        }
+        // небо → космос
+        c.drawRect(0f, 0f, w, horizon + 1f, skyP)
+        for (i in 0 until starN) {
+            val y = starY[i] * horizon * 0.95f
+            sparkPaint.alpha = ((60 + 170 * (0.5f + 0.5f * sin(time * 1.6f + starP[i]))) * (1f - y / horizon)).toInt()
+            c.drawCircle(starX[i] * w, y, unit * (0.0013f + 0.0013f * (i % 3)), sparkPaint)
+        }
+
+        // планета-полумесяц
+        val px = w * 0.62f
+        val py = horizon * 0.48f
+        val pr = unit * 0.42f
+        fill.color = mixC(acc, Color.BLACK, 0.55f)
+        fill.alpha = 120
+        c.drawCircle(px, py, pr, fill)
+        planetPath.rewind(); planetPath.addCircle(px, py, pr, Path.Direction.CW)
+        cutPath.rewind(); cutPath.addCircle(px + pr * 0.22f, py + pr * 0.10f, pr * 0.97f, Path.Direction.CW)
+        planetPath.op(cutPath, Path.Op.DIFFERENCE)
+        c.save(); c.translate(px, py); c.scale(pr, pr); c.translate(-px / pr, -py / pr)
+        c.restore()
+        c.drawPath(planetPath, crescentP.also { it.shader?.setLocalMatrix(android.graphics.Matrix().apply { setScale(pr, pr); postTranslate(px, py) }) })
+        stroke.color = Color.WHITE
+        stroke.strokeWidth = max(1f, unit * 0.003f)
+        stroke.alpha = 70
+        c.drawCircle(px, py, pr * 1.01f, stroke)
+
+        // солнце с лучами и бликом линзы
+        val sx = w * 0.30f
+        val sy = horizon * 0.40f
+        val sr = unit * 0.34f * (1f + 0.03f * sin(time * 0.8f))
+        c.save(); c.translate(sx, sy); c.scale(sr, sr); c.drawCircle(0f, 0f, 1f, sunGlow); c.restore()
+        stroke.color = Color.WHITE
+        for (k in 0 until 8) {
+            val ang = k * PI.toFloat() / 4f + time * 0.03f
+            val len = unit * (if (k % 2 == 0) 0.55f else 0.32f)
+            stroke.strokeWidth = max(1.5f, unit * (if (k % 2 == 0) 0.006f else 0.004f))
+            stroke.alpha = (50 + 25 * sin(time * 1.3f + k)).toInt()
+            c.drawLine(sx, sy, sx + cos(ang) * len, sy + sin(ang) * len, stroke)
+        }
+        stroke.strokeWidth = max(2f, unit * 0.005f)
+        stroke.color = Color.rgb(255, 170, 200)
+        stroke.alpha = 70
+        c.drawCircle(sx, sy, unit * 0.14f, stroke)
+        stroke.color = Color.WHITE
+
+        // летающие скалы на горизонте
+        for ((fx, sc) in listOf(0.18f to 0.9f, 0.80f to 1.2f, 0.55f to 0.55f)) {
+            rockIsland(c, w * fx, horizon, unit * 0.16f * sc, mixC(acc, Color.BLACK, 0.45f))
+        }
+
+        // море с солнечной дорожкой
+        c.drawRect(0f, horizon, w, shoreY + unit * 0.02f, seaP)
+        for (k in 0 until 26) {
+            val t = k / 26f
+            val y = horizon + (shoreY - horizon) * t * t
+            val spread = unit * (0.04f + 0.25f * t)
+            val off = sin(time * 1.4f + k * 1.7f) * spread * 0.5f
+            fill.color = Color.WHITE
+            fill.alpha = (150 * (1f - t * 0.6f) * (0.6f + 0.4f * sin(time * 2.1f + k))).toInt()
+            c.drawRect(sx + off - spread * 0.5f, y, sx + off + spread * 0.5f, y + unit * (0.003f + 0.004f * t), fill)
+        }
+        // лёгкая рябь
+        stroke.strokeWidth = max(1f, unit * 0.0025f)
+        for (k in 0 until 10) {
+            val y = horizon + (shoreY - horizon) * (0.1f + 0.09f * k)
+            val x = ((k * 0.37f + time * 0.02f * (1 + k % 3)) % 1f) * w
+            stroke.alpha = 55
+            c.drawLine(x - unit * 0.06f, y, x + unit * 0.06f, y, stroke)
+        }
+
+        // берег с набегающей пеной
+        val wash = unit * 0.025f * sin(time * 0.6f)
+        path.rewind()
+        path.moveTo(0f, shoreY + unit * 0.06f + wash)
+        path.quadTo(w * 0.45f, shoreY - unit * 0.03f + wash, w, shoreY + unit * 0.02f + wash)
+        path.lineTo(w, h); path.lineTo(0f, h); path.close()
+        c.drawPath(path, shoreP)
+        stroke.color = Color.WHITE
+        stroke.strokeWidth = max(2f, unit * 0.008f)
+        stroke.alpha = (170 + 60 * sin(time * 0.6f)).toInt()
+        path.rewind()
+        path.moveTo(0f, shoreY + unit * 0.06f + wash)
+        path.quadTo(w * 0.45f, shoreY - unit * 0.03f + wash, w, shoreY + unit * 0.02f + wash)
+        c.drawPath(path, stroke)
+        // камушки
+        fill.color = Color.rgb(40, 40, 48)
+        fill.alpha = 200
+        c.drawOval(w * 0.78f, shoreY + unit * 0.07f, w * 0.84f, shoreY + unit * 0.095f, fill)
+        c.drawCircle(w * 0.30f, h * 0.95f, unit * 0.006f, fill)
+        c.drawCircle(w * 0.58f, h * 0.92f, unit * 0.005f, fill)
+        fill.color = Color.WHITE
+    }
+
+    /** Силуэт летающей скалы-«гриба» на горизонте. */
+    private fun rockIsland(c: Canvas, x: Float, base: Float, s: Float, col: Int) {
+        path.rewind()
+        path.moveTo(x - s * 0.35f, base)
+        path.quadTo(x - s * 0.25f, base - s * 0.8f, x - s * 0.95f, base - s * 1.1f)
+        path.quadTo(x - s * 0.9f, base - s * 1.45f, x - s * 0.3f, base - s * 1.42f)
+        path.quadTo(x, base - s * 1.7f, x + s * 0.35f, base - s * 1.45f)
+        path.quadTo(x + s * 1.0f, base - s * 1.4f, x + s * 0.9f, base - s * 1.08f)
+        path.quadTo(x + s * 0.3f, base - s * 0.8f, x + s * 0.35f, base)
+        path.close()
+        fill.color = col
+        fill.alpha = 210
+        c.drawPath(path, fill)
+        fill.color = Color.WHITE
+        fill.alpha = 40
+        c.drawRect(x - s * 0.5f, base, x + s * 0.5f, base + s * 0.08f, fill)
     }
 
     private fun smooth(e0: Float, e1: Float, x: Float): Float {

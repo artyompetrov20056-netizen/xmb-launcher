@@ -13,10 +13,10 @@ import android.graphics.Shader
 import java.util.WeakHashMap
 
 /** Оформление иконок в стиле. */
-enum class FrameKind { NONE, BUBBLE, BEVEL, SQUARE, GLOW, ROUNDED, CARD, CHROME, HUD, PEBBLE }
+enum class FrameKind { NONE, BUBBLE, BEVEL, SQUARE, GLOW, ROUNDED, CARD, CHROME, HUD, PEBBLE, CRYSTAL }
 
 /** Анимированная сцена фона. */
-enum class Scene { WAVES, SPHERES, TILES, CUBES, SOFT_WAVE, LINES, RIBBONS, LIGHT, PARTICLES, CHROME, WEBCORE, SNAKE }
+enum class Scene { WAVES, SPHERES, TILES, CUBES, SOFT_WAVE, LINES, RIBBONS, LIGHT, PARTICLES, CHROME, WEBCORE, SNAKE, CRYSTAL }
 
 /**
  * Стиль оформления: анимированный фон + вид иконок.
@@ -68,6 +68,7 @@ object VisualStyles {
             "Змейка", Scene.SNAKE, intArrayOf(c(0xFF3F0A84), c(0xFF2C6DC2), c(0xFF9A35C8)), FrameKind.PEBBLE, 1.3f, 2,
             glyphInk = c(0xFF16250A),
         ),
+        VisualStyle("Кристаллы", Scene.CRYSTAL, null, FrameKind.CRYSTAL, 0.95f, 2),
     )
 
     val NAMES = ALL.map { it.name }
@@ -97,7 +98,10 @@ object VisualStyles {
     /**
      * Подложка под значок. size — размер значка, sel — насколько пункт выбран (0..1).
      */
-    fun drawFrame(c: Canvas, s: VisualStyle, cx: Float, cy: Float, size: Float, alpha: Int, sel: Float, time: Float = 0f) {
+    /** Основной цвет темы — для стилей, которые подстраиваются под «Цвет темы». */
+    var accent = Color.rgb(42, 120, 208)
+
+    fun drawFrame(c: Canvas, s: VisualStyle, cx: Float, cy: Float, size: Float, alpha: Int, sel: Float, time: Float = 0f, app: Boolean = false) {
         val a = alpha.coerceIn(0, 255) / 255f
         val lw = (size * 0.03f).coerceAtLeast(1.2f)
         when (s.frame) {
@@ -155,6 +159,7 @@ object VisualStyles {
             FrameKind.CHROME -> drawChromeFrame(c, cx, cy, size, a, sel, time)
             FrameKind.HUD -> drawHudFrame(c, s, cx, cy, size, a, sel, time)
             FrameKind.PEBBLE -> drawPebble(c, cx, cy, size, a, sel)
+            FrameKind.CRYSTAL -> drawCrystal(c, cx, cy, size, a, sel, time, app)
             FrameKind.CARD -> {
                 val h = size * 0.64f
                 r.set(cx - h, cy - h, cx + h, cy + h)
@@ -222,6 +227,132 @@ object VisualStyles {
         }
         line.color = Color.WHITE
         fill.color = Color.WHITE
+    }
+
+    // ---------------- Кристаллы: вращающийся гранёный кристалл ----------------
+
+    private val facet = android.graphics.Path()
+    private val ex = FloatArray(13)
+    private val ed = FloatArray(13)
+    private val tintGlow = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var tintGlowColor = 0
+
+    private fun mix(a: Int, b: Int, f: Float) = Color.rgb(
+        (Color.red(a) + (Color.red(b) - Color.red(a)) * f).toInt(),
+        (Color.green(a) + (Color.green(b) - Color.green(a)) * f).toInt(),
+        (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * f).toInt(),
+    )
+
+    private fun aura(c: Canvas, cx: Float, cy: Float, rr: Float, alpha: Int) {
+        val col = mix(accent, Color.WHITE, 0.45f)
+        if (col != tintGlowColor) {
+            tintGlowColor = col
+            tintGlow.shader = RadialGradient(0f, 0f, 1f,
+                intArrayOf(Color.argb(200, Color.red(col), Color.green(col), Color.blue(col)), Color.argb(60, Color.red(col), Color.green(col), Color.blue(col)), Color.TRANSPARENT),
+                floatArrayOf(0f, 0.4f, 1f), Shader.TileMode.CLAMP)
+        }
+        tintGlow.alpha = alpha.coerceIn(0, 255)
+        c.save(); c.translate(cx, cy); c.scale(rr, rr); c.drawCircle(0f, 0f, 1f, tintGlow); c.restore()
+    }
+
+    private fun sparkle(c: Canvas, x: Float, y: Float, s: Float, alpha: Int) {
+        line.color = Color.WHITE
+        line.strokeWidth = max(1f, s * 0.18f)
+        line.alpha = alpha.coerceIn(0, 255)
+        c.drawLine(x - s, y, x + s, y, line)
+        c.drawLine(x, y - s, x, y + s, line)
+        line.strokeWidth = max(1f, s * 0.1f)
+        c.drawLine(x - s * 0.5f, y - s * 0.5f, x + s * 0.5f, y + s * 0.5f, line)
+        c.drawLine(x - s * 0.5f, y + s * 0.5f, x + s * 0.5f, y - s * 0.5f, line)
+    }
+
+    private fun drawCrystal(c: Canvas, cx: Float, cy: Float, size: Float, a: Float, sel: Float, time: Float, app: Boolean) {
+        val al = (255 * a).toInt()
+        aura(c, cx, cy, size * (0.85f + 0.25f * sel), (al * (0.25f + 0.45f * sel)).toInt())
+        if (app) {
+            // иконкам приложений — стеклянный ободок
+            line.color = mix(accent, Color.WHITE, 0.7f)
+            line.strokeWidth = (size * 0.035f).coerceAtLeast(1.5f)
+            line.alpha = (al * (0.5f + 0.4f * sel)).toInt()
+            r.set(cx - size * 0.5f, cy - size * 0.5f, cx + size * 0.5f, cy + size * 0.5f)
+            c.drawRoundRect(r, size * 0.13f, size * 0.13f, line)
+            line.color = Color.WHITE
+            return
+        }
+        val hh = size * 0.74f
+        val ww = size * 0.44f
+        val n = 6
+        val rot = time * (0.5f + 0.4f * sel) + cx * 0.011f + cy * 0.007f
+        val light = mix(accent, Color.WHITE, 0.72f)
+        val mid = mix(accent, Color.WHITE, 0.25f)
+        val deep = mix(accent, Color.BLACK, 0.5f)
+        val twoPi = (2.0 * Math.PI).toFloat()
+        for (i in 0..n) {
+            val th = rot + i * twoPi / n
+            ex[i] = cx + ww * kotlin.math.sin(th)
+            ed[i] = kotlin.math.cos(th)
+        }
+        // грани (видны только передние)
+        for (i in 0 until n) {
+            val thm = rot + (i + 0.5f) * twoPi / n
+            if (kotlin.math.cos(thm) <= 0f) continue
+            val lit = 0.25f + 0.75f * max(0f, kotlin.math.cos(thm + 0.9f))
+            // верхняя грань
+            facet.rewind()
+            facet.moveTo(cx, cy - hh); facet.lineTo(ex[i], cy); facet.lineTo(ex[i + 1], cy); facet.close()
+            fill.color = if (lit > 0.6f) mix(mid, light, (lit - 0.6f) / 0.4f) else mix(deep, mid, lit / 0.6f)
+            fill.alpha = (al * 0.93f).toInt()
+            c.drawPath(facet, fill)
+            // нижняя грань — темнее
+            facet.rewind()
+            facet.moveTo(cx, cy + hh); facet.lineTo(ex[i], cy); facet.lineTo(ex[i + 1], cy); facet.close()
+            val lb = lit * 0.65f
+            fill.color = if (lb > 0.6f) mix(mid, light, (lb - 0.6f) / 0.4f) else mix(deep, mid, lb / 0.6f)
+            c.drawPath(facet, fill)
+        }
+        // внутренняя «преломлённая» огранка
+        line.color = Color.WHITE
+        line.strokeWidth = (size * 0.012f).coerceAtLeast(1f)
+        line.alpha = (al * 0.35f).toInt()
+        for (i in 0 until n) {
+            val th = -rot * 1.3f + i * twoPi / n
+            if (kotlin.math.cos(th) < 0f) continue
+            val ix = cx + ww * 0.5f * kotlin.math.sin(th)
+            c.drawLine(cx, cy - hh * 0.55f, ix, cy + hh * 0.08f, line)
+            c.drawLine(ix, cy + hh * 0.08f, cx, cy + hh * 0.6f, line)
+        }
+        // рёбра
+        line.strokeWidth = (size * 0.018f).coerceAtLeast(1f)
+        for (i in 0..n) {
+            if (ed[i] < -0.05f) continue
+            line.alpha = (al * (0.35f + 0.4f * ed[i])).toInt()
+            c.drawLine(ex[i], cy, cx, cy - hh, line)
+            c.drawLine(ex[i], cy, cx, cy + hh, line)
+        }
+        line.alpha = (al * 0.6f).toInt()
+        var first = -1
+        for (i in 0 until n) {
+            val thm = rot + (i + 0.5f) * twoPi / n
+            if (kotlin.math.cos(thm) > 0f) { c.drawLine(ex[i], cy, ex[i + 1], cy, line); if (first < 0) first = i }
+        }
+        // бегущий блик по грани
+        val glint = (time * 0.35f + cx * 0.003f) % 1f
+        if (glint < 0.35f) {
+            val g = glint / 0.35f
+            line.strokeWidth = size * 0.05f
+            line.alpha = (al * 0.75f * kotlin.math.sin(g * Math.PI).toFloat()).toInt()
+            val yy = cy - hh * (0.9f - g * 0.8f)
+            val half = ww * (1f - (cy - yy).let { kotlin.math.abs(it) } / hh) * 0.75f
+            c.drawLine(cx - half, yy + half * 0.3f, cx + half * 0.3f, yy - half * 0.2f, line)
+        }
+        // искры
+        val nSp = if (sel > 0.3f) 5 else 2
+        for (k in 0 until nSp) {
+            val ang = k * 2.4f + time * 0.3f
+            val rr = size * (0.62f + 0.18f * kotlin.math.sin(time + k))
+            val tw = 0.5f + 0.5f * kotlin.math.sin(time * 3.1f + k * 1.7f)
+            sparkle(c, cx + rr * kotlin.math.cos(ang), cy + rr * kotlin.math.sin(ang) * 1.2f, size * 0.07f * (0.5f + tw), (al * tw * (0.5f + 0.5f * sel)).toInt())
+        }
     }
 
     // ---------------- Змейка: мягкая зелёная «галечка» с контуром ----------------
