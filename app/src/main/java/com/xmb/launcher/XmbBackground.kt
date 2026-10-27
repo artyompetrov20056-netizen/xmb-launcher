@@ -1051,30 +1051,14 @@ class XmbBackground {
         c.drawCircle(sx, sy, unit * 0.14f, stroke)
         stroke.color = Color.WHITE
 
-        // летающие скалы на горизонте
-        for ((fx, sc) in listOf(0.18f to 0.9f, 0.80f to 1.2f, 0.55f to 0.55f)) {
-            rockIsland(c, w * fx, horizon, unit * 0.16f * sc, mixC(acc, Color.BLACK, 0.45f))
-        }
+        // полигональные острова: дальние — в дымке, ближние — контрастные
+        drawIslands(c, w, h, horizon, unit, time, acc, nearOnly = false)
 
-        // море с солнечной дорожкой
-        c.drawRect(0f, horizon, w, shoreY + unit * 0.02f, seaP)
-        for (k in 0 until 26) {
-            val t = k / 26f
-            val y = horizon + (shoreY - horizon) * t * t
-            val spread = unit * (0.04f + 0.25f * t)
-            val off = sin(time * 1.4f + k * 1.7f) * spread * 0.5f
-            fill.color = Color.WHITE
-            fill.alpha = (150 * (1f - t * 0.6f) * (0.6f + 0.4f * sin(time * 2.1f + k))).toInt()
-            c.drawRect(sx + off - spread * 0.5f, y, sx + off + spread * 0.5f, y + unit * (0.003f + 0.004f * t), fill)
-        }
-        // лёгкая рябь
-        stroke.strokeWidth = max(1f, unit * 0.0025f)
-        for (k in 0 until 10) {
-            val y = horizon + (shoreY - horizon) * (0.1f + 0.09f * k)
-            val x = ((k * 0.37f + time * 0.02f * (1 + k % 3)) % 1f) * w
-            stroke.alpha = 55
-            c.drawLine(x - unit * 0.06f, y, x + unit * 0.06f, y, stroke)
-        }
+        // полигональный океан с рассеиванием и бликами
+        drawPolySea(c, w, horizon, shoreY + unit * 0.05f, unit, time, acc, sx)
+
+        // ближний утёс поверх воды
+        drawIslands(c, w, h, horizon, unit, time, acc, nearOnly = true)
 
         // берег с набегающей пеной
         val wash = unit * 0.025f * sin(time * 0.6f)
@@ -1097,6 +1081,202 @@ class XmbBackground {
         c.drawCircle(w * 0.30f, h * 0.95f, unit * 0.006f, fill)
         c.drawCircle(w * 0.58f, h * 0.92f, unit * 0.005f, fill)
         fill.color = Color.WHITE
+    }
+
+    // ---------------- полигональный океан ----------------
+
+    private val seaC = 18
+    private val seaR = 14
+    private val seaJit = FloatArray((seaC + 1) * (seaR + 1)) { rnd.nextFloat() - 0.5f }
+    private val gx = FloatArray((seaC + 1) * (seaR + 1))
+    private val gy = FloatArray((seaC + 1) * (seaR + 1))
+    private val gz = FloatArray((seaC + 1) * (seaR + 1))
+    private val gd = FloatArray((seaC + 1) * (seaR + 1))
+    private val triV = FloatArray(4000)
+    private val triC = IntArray(2000)
+    private var triN = 0
+    private val vtxPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val glintPts = FloatArray(400)
+    private var glintN = 0
+
+    private fun addTri(x1: Float, y1: Float, x2: Float, y2: Float, x3: Float, y3: Float, col: Int) {
+        if (triN * 6 + 6 > triV.size) return
+        val o = triN * 6
+        triV[o] = x1; triV[o + 1] = y1; triV[o + 2] = x2; triV[o + 3] = y2; triV[o + 4] = x3; triV[o + 5] = y3
+        triC[triN * 3] = col; triC[triN * 3 + 1] = col; triC[triN * 3 + 2] = col
+        triN++
+    }
+
+    private fun flushTris(c: Canvas) {
+        if (triN == 0) return
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            c.drawVertices(Canvas.VertexMode.TRIANGLES, triN * 6, triV, 0, null, 0, triC, 0, null, 0, 0, vtxPaint)
+        } else {
+            for (t in 0 until triN) {
+                val o = t * 6
+                path.rewind()
+                path.moveTo(triV[o], triV[o + 1]); path.lineTo(triV[o + 2], triV[o + 3]); path.lineTo(triV[o + 4], triV[o + 5]); path.close()
+                fill.color = triC[t * 3]; fill.alpha = 255
+                c.drawPath(path, fill)
+            }
+            fill.color = Color.WHITE
+        }
+        triN = 0
+    }
+
+    private fun clampC(v: Float) = v.coerceIn(0f, 255f).toInt()
+
+    /** Цвет грани: база + свет + рассеивание + блик. */
+    private fun shade(base: Int, glow: Int, diffuse: Float, sss: Float, spec: Float): Int {
+        var r = Color.red(base) * (0.62f + 0.55f * diffuse)
+        var g = Color.green(base) * (0.62f + 0.55f * diffuse)
+        var b = Color.blue(base) * (0.62f + 0.55f * diffuse)
+        r += (Color.red(glow) - r) * sss; g += (Color.green(glow) - g) * sss; b += (Color.blue(glow) - b) * sss
+        r += (255f - r) * spec; g += (255f - g) * spec; b += (255f - b) * spec
+        return Color.rgb(clampC(r), clampC(g), clampC(b))
+    }
+
+    private fun drawPolySea(c: Canvas, w: Float, horizon: Float, bottom: Float, unit: Float, time: Float, acc: Int, sunX: Float) {
+        val far = mixC(acc, Color.WHITE, 0.62f)
+        val deep = mixC(acc, Color.BLACK, 0.30f)
+        val glowCol = mixC(mixC(acc, Color.WHITE, 0.35f), Color.rgb(140, 255, 240), 0.15f)
+        // сетка вершин в перспективе
+        for (r in 0..seaR) {
+            val v = r / seaR.toFloat()
+            val y = horizon + (bottom - horizon) * Math.pow(v.toDouble(), 1.55).toFloat()
+            val spread = 1.05f + 0.9f * v
+            val amp = unit * (0.003f + 0.05f * v * v)
+            for (cI in 0..seaC) {
+                val k = r * (seaC + 1) + cI
+                val uu = cI / seaC.toFloat() + seaJit[k] * 0.5f / seaC
+                val x = w / 2f + (uu - 0.5f) * w * spread
+                val hgt = amp * (0.65f * sin(v * 30f - time * 1.2f + x / (unit * 0.6f) + seaJit[k] * 0.6f) +
+                    0.35f * sin(x / (unit * 0.09f * (0.4f + v)) + v * 13f + time * 0.7f))
+                gx[k] = x; gy[k] = y - hgt; gz[k] = hgt / max(amp, 0.001f); gd[k] = v
+            }
+        }
+        // источник света — солнце сверху-слева за горизонтом
+        val lx = -0.35f; val ly = -0.75f; val lz = 0.56f
+        glintN = 0
+        for (r in 0 until seaR) for (cI in 0 until seaC) {
+            val a = r * (seaC + 1) + cI
+            val b = a + 1
+            val d = a + seaC + 1
+            val e = d + 1
+            for (tri in 0..1) {
+                val i1 = a; val i2 = if (tri == 0) b else e; val i3 = if (tri == 0) e else d
+                // нормаль грани по псевдо-3D (x, глубина, высота)
+                val ax = gx[i2] - gx[i1]; val ay = (gd[i2] - gd[i1]) * unit * 2f; val az = (gz[i2] - gz[i1]) * unit * 0.04f
+                val bxv = gx[i3] - gx[i1]; val byv = (gd[i3] - gd[i1]) * unit * 2f; val bzv = (gz[i3] - gz[i1]) * unit * 0.04f
+                var nx = ay * bzv - az * byv
+                var ny = az * bxv - ax * bzv
+                var nz = ax * byv - ay * bxv
+                if (nz < 0f) { nx = -nx; ny = -ny; nz = -nz }
+                val nl = sqrt(nx * nx + ny * ny + nz * nz).coerceAtLeast(1e-6f)
+                nx /= nl; ny /= nl; nz /= nl
+                val v = (gd[i1] + gd[i2] + gd[i3]) / 3f
+                val cxm = (gx[i1] + gx[i2] + gx[i3]) / 3f
+                val crest = ((gz[i1] + gz[i2] + gz[i3]) / 3f).coerceIn(-1f, 1f)
+                val diffuse = max(0f, nx * lx + ny * ly + nz * lz)
+                // рассеивание: подсвеченные изнутри гребни, повёрнутые к зрителю
+                val sss = (0.5f + 0.5f * crest) * max(0f, ny) * 0.9f * (0.3f + 0.7f * v)
+                // блик: отражение солнца к зрителю, сильнее в солнечной дорожке
+                val rdot = 2f * (nx * lx + ny * ly + nz * lz)
+                val rx = rdot * nx - lx; val ry = rdot * ny - ly; val rz = rdot * nz - lz
+                val vdot = max(0f, ry * 0.75f + rz * 0.66f)
+                val column = exp(-((cxm - sunX) / (w * (0.10f + 0.18f * v))).let { it * it })
+                val spec = (Math.pow(vdot.toDouble(), 32.0).toFloat() * (0.4f + 1.2f * column)).coerceIn(0f, 1f)
+                val base = mixC(far, deep, v)
+                addTri(gx[i1], gy[i1], gx[i2], gy[i2], gx[i3], gy[i3], shade(base, glowCol, diffuse, sss, spec))
+                if (spec > 0.55f && glintN < glintPts.size / 2 - 1) {
+                    glintPts[glintN * 2] = cxm; glintPts[glintN * 2 + 1] = (gy[i1] + gy[i2] + gy[i3]) / 3f; glintN++
+                }
+            }
+        }
+        flushTris(c)
+        // искры на самых ярких гранях
+        for (k in 0 until glintN) {
+            val tw = 0.5f + 0.5f * sin(time * 6f + k * 2.3f)
+            sparkPaint.alpha = (200 * tw).toInt()
+            c.drawCircle(glintPts[k * 2], glintPts[k * 2 + 1], unit * 0.004f * (0.6f + tw), sparkPaint)
+        }
+    }
+
+    // ---------------- полигональные острова с глубиной ----------------
+
+    /** x (доля ширины), масштаб, глубина 0 — ближний … 1 — у горизонта. */
+    private val islands = arrayOf(
+        floatArrayOf(0.50f, 0.07f, 0.95f), floatArrayOf(0.12f, 0.10f, 0.88f), floatArrayOf(0.90f, 0.12f, 0.82f),
+        floatArrayOf(0.32f, 0.15f, 0.70f), floatArrayOf(0.74f, 0.21f, 0.58f),
+        floatArrayOf(-0.04f, 0.62f, 0.05f),
+    )
+    private val islOuter = Array(islands.size) { FloatArray(0) }
+    private val islInner = Array(islands.size) { FloatArray(0) }
+
+    private fun buildIsland(idx: Int) {
+        val r = Random(100L + idx)
+        val base = floatArrayOf(
+            -0.35f, 0f, -0.30f, -0.45f, -0.55f, -0.72f, -1.00f, -0.85f, -0.95f, -1.05f, -0.62f, -1.22f,
+            -0.20f, -1.16f, 0.15f, -1.30f, 0.55f, -1.18f, 0.95f, -1.04f, 1.00f, -0.84f, 0.55f, -0.74f,
+            0.32f, -0.45f, 0.36f, 0f
+        )
+        val out = FloatArray(base.size)
+        for (k in base.indices) out[k] = base[k] + (r.nextFloat() - 0.5f) * 0.12f
+        out[1] = 0f; out[base.size - 1] = 0f
+        val inner = FloatArray(base.size)
+        val cx = 0f; val cy = -0.85f
+        for (k in 0 until base.size / 2) {
+            val f = 0.5f + r.nextFloat() * 0.12f
+            inner[k * 2] = cx + (out[k * 2] - cx) * f
+            inner[k * 2 + 1] = cy + (out[k * 2 + 1] - cy) * f
+        }
+        islOuter[idx] = out
+        islInner[idx] = inner
+    }
+
+    private fun drawIslands(c: Canvas, w: Float, h: Float, horizon: Float, unit: Float, time: Float, acc: Int, nearOnly: Boolean) {
+        val haze = mixC(acc, Color.WHITE, 0.55f)
+        val rock = mixC(mixC(acc, Color.rgb(60, 70, 80), 0.5f), Color.BLACK, 0.45f)
+        val lit = mixC(rock, mixC(acc, Color.WHITE, 0.5f), 0.55f)
+        val lx = -0.55f; val ly = -0.5f; val lz = 0.67f
+        for (idx in islands.indices) {
+            val isl = islands[idx]
+            val depth = isl[2]
+            if (nearOnly != (depth < 0.2f)) continue
+            if (islOuter[idx].isEmpty()) buildIsland(idx)
+            val s = unit * isl[1]
+            val drift = sin(time * 0.05f + idx) * w * 0.012f * (1f - depth)
+            val ox = isl[0] * w + drift
+            val oy = if (depth < 0.2f) h * 0.80f else horizon + unit * 0.004f
+            val out = islOuter[idx]
+            val inn = islInner[idx]
+            val n = out.size / 2
+            val ccx = ox; val ccy = oy - 0.85f * s
+            fun tri(x1: Float, y1: Float, z1: Float, x2: Float, y2: Float, z2: Float, x3: Float, y3: Float, z3: Float) {
+                val ax = x2 - x1; val ay = y2 - y1; val az = (z2 - z1) * s
+                val bxv = x3 - x1; val byv = y3 - y1; val bzv = (z3 - z1) * s
+                var nx = ay * bzv - az * byv
+                var ny = az * bxv - ax * bzv
+                var nz = ax * byv - ay * bxv
+                if (nz < 0f) { nx = -nx; ny = -ny; nz = -nz }
+                val nl = sqrt(nx * nx + ny * ny + nz * nz).coerceAtLeast(1e-6f)
+                val l = max(0f, (nx * lx + ny * ly + nz * lz) / nl)
+                val col = mixC(mixC(rock, lit, l), haze, depth * 0.85f)
+                addTri(x1, y1, x2, y2, x3, y3, col)
+            }
+            for (k in 0 until n - 1) {
+                val o1x = ox + out[k * 2] * s; val o1y = oy + out[k * 2 + 1] * s
+                val o2x = ox + out[k * 2 + 2] * s; val o2y = oy + out[k * 2 + 3] * s
+                val i1x = ox + inn[k * 2] * s; val i1y = oy + inn[k * 2 + 1] * s
+                val i2x = ox + inn[k * 2 + 2] * s; val i2y = oy + inn[k * 2 + 3] * s
+                tri(o1x, o1y, 0f, o2x, o2y, 0f, i1x, i1y, 0.55f)
+                tri(i1x, i1y, 0.55f, o2x, o2y, 0f, i2x, i2y, 0.55f)
+                tri(ccx, ccy, 1f, i1x, i1y, 0.55f, i2x, i2y, 0.55f)
+            }
+            // замыкание нижней грани
+            tri(ox + out[(n - 1) * 2] * s, oy + out[(n - 1) * 2 + 1] * s, 0f, ox + out[0] * s, oy + out[1] * s, 0f, ccx, ccy, 1f)
+        }
+        flushTris(c)
     }
 
     /** Силуэт летающей скалы-«гриба» на горизонте. */
