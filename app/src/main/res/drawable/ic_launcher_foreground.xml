@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Иконка: две световые волны в духе фона XMB -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#40FFFFFF"
+        android:pathData="M18,58 C32,44 46,70 60,56 C72,44 82,50 90,46 L90,56 C82,60 72,54 60,66 C46,80 32,54 18,68 Z" />
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M18,58 C32,44 46,70 60,56 C72,44 82,50 90,46" />
+    <path
+        android:strokeColor="#B0FFFFFF"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M18,66 C34,54 48,76 62,62 C74,52 82,58 90,54" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M40,34 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+    <path
+        android:fillColor="#C0FFFFFF"
+        android:pathData="M70,38 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0" />
+</vector>
