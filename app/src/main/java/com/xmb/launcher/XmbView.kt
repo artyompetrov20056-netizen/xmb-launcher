@@ -269,7 +269,7 @@ class XmbView(context: Context) : View(context) {
                 item = categories[ci].items.getOrNull(itemTarget[ci])
             }
         }
-        val key = item?.key
+        val key = item?.key ?: item?.pic?.path
         if (key != dwellKey) {
             dwellKey = key
             dwellStart = now

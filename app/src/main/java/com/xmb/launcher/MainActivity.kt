@@ -108,7 +108,7 @@ class MainActivity : Activity(), XmbView.Listener {
         music = XmbMusic()
         music.level = prefs.getInt(PREF_MUSIC_LEVEL, 2)
         music.setGlobal(media.globalMusic())
-        xmb.backgroundProvider = { item, landscape -> item.key?.let { media.background(it, landscape) } }
+        xmb.backgroundProvider = { item, landscape -> item.key?.let { media.background(it, landscape) } ?: item.pic }
         xmb.initialCategoryId = prefs.getString(PREF_CATEGORY, "game")
         xmb.setOnApplyWindowInsetsListener { _, insets ->
             xmb.applyInsets(insets)
@@ -147,6 +147,7 @@ class MainActivity : Activity(), XmbView.Listener {
         handler.removeCallbacks(timerTick)
         handler.post(timerTick)
         LockController.start(this)
+        Ppsspp.refresh(this) { if (!isDestroyed) refreshMenu() }
         if (reopenLockSetup) {
             // Вернулись из системных настроек — показываем обновлённый список разрешений
             reopenLockSetup = false
@@ -349,7 +350,10 @@ class MainActivity : Activity(), XmbView.Listener {
                     appsOf { Kind.PHOTO in it.kinds }.filter { it.glyph != Glyph.EMPTY }),
             XmbCategory("music", "Музыка", Glyph.MUSIC, appsOf { Kind.MUSIC in it.kinds }),
             XmbCategory("video", "Видео", Glyph.VIDEO, appsOf { Kind.VIDEO in it.kinds }),
-            XmbCategory("game", "Игры", Glyph.GAME, appsOf { Kind.GAME in it.kinds }),
+            XmbCategory("game", "Игры", Glyph.GAME, pspItems().let { psp ->
+                if (psp.isEmpty()) appsOf { Kind.GAME in it.kinds }
+                else psp + appsOf { Kind.GAME in it.kinds }.filter { it.glyph != Glyph.EMPTY }
+            }),
             XmbCategory("network", "Сеть", Glyph.NETWORK, appsOf { Kind.NETWORK in it.kinds }),
             XmbCategory("apps", "Приложения", Glyph.APPS, buildAppsItems(list)),
             XmbCategory("favorites", "Избранное", Glyph.FAVORITE, favItems),
@@ -391,6 +395,70 @@ class MainActivity : Activity(), XmbView.Listener {
         sounds.back()
         refreshMenu()
         xmb.goToFirstItem()
+    }
+
+    // ---------------- PPSSPP ----------------
+
+    private fun pspItems(): List<XmbItem> {
+        if (Ppsspp.installed(this) == null) return emptyList()
+        val out = ArrayList<XmbItem>()
+        for (g in Ppsspp.games) {
+            out += XmbItem(g.title, "PSP · PPSSPP", if (g.icon == null) Glyph.GAME else null, icon = g.icon, pic = g.pic,
+                onClick = { act ->
+                    act.sounds.launch()
+                    if (!Ppsspp.launch(act, g.entry)) Toast.makeText(act, "Не удалось запустить игру в PPSSPP", Toast.LENGTH_SHORT).show()
+                })
+        }
+        val mem = Ppsspp.memTree(this)
+        out += XmbItem("PPSSPP", if (mem == null) "Подключите папку PSP, чтобы здесь появились недавние игры" else Ppsspp.status.ifEmpty { "Папка PSP: " + Ppsspp.treeLabel(mem) },
+            Glyph.SETTINGS, onClick = { it.openPpssppMenu() })
+        return out
+    }
+
+    fun openPpssppMenu() {
+        val mem = Ppsspp.memTree(this)
+        val games = Ppsspp.gamesTree(this)
+        val sub = "Папка PSP: " + Ppsspp.treeLabel(mem) + " · Игры: " + Ppsspp.treeLabel(games)
+        val opts = arrayListOf("Выбрать папку PSP", "Папка с играми (иконки и фоны)", "Обновить список")
+        if (mem != null || games != null) opts += "Отключить"
+        xmb.showOverlay(DialogOverlay("PPSSPP", sub, opts) { pick ->
+            when (pick) {
+                0 -> pickTree(REQ_PSP_MEM, "PSP")
+                1 -> pickTree(REQ_PSP_GAMES, null)
+                2 -> Ppsspp.refresh(this) { refreshMenu() }
+                3 -> {
+                    Ppsspp.setTree(this, false, null); Ppsspp.setTree(this, true, null)
+                    Ppsspp.refresh(this) { refreshMenu() }
+                    refreshMenu()
+                }
+            }
+        })
+    }
+
+    private fun pickTree(request: Int, hint: String?) {
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+        if (hint != null) i.putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI,
+            android.net.Uri.parse("content://com.android.externalstorage.documents/document/primary%3A" + hint))
+        if (request == REQ_PSP_MEM) Toast.makeText(this, "Выберите папку PSP — ту, что указана в PPSSPP как Memory Stick", Toast.LENGTH_LONG).show()
+        else Toast.makeText(this, "Выберите папку, где лежат образы игр", Toast.LENGTH_LONG).show()
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(i, request)
+        } catch (_: Exception) {
+            Toast.makeText(this, "Не удалось открыть выбор папки", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun onPspTree(games: Boolean, uri: android.net.Uri) {
+        try {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (_: Exception) {}
+        Ppsspp.setTree(this, games, uri)
+        Toast.makeText(this, "Читаю недавние игры PPSSPP…", Toast.LENGTH_SHORT).show()
+        Ppsspp.refresh(this) {
+            refreshMenu()
+            if (!games && Ppsspp.games.isEmpty()) Toast.makeText(this, Ppsspp.status, Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun appItem(e: AppEntry) = XmbItem(
@@ -829,6 +897,7 @@ class MainActivity : Activity(), XmbView.Listener {
         super.onActivityResult(requestCode, resultCode, data)
         val uri = data?.data
         if (resultCode != RESULT_OK || uri == null) return
+        if (requestCode == REQ_PSP_MEM || requestCode == REQ_PSP_GAMES) { onPspTree(requestCode == REQ_PSP_GAMES, uri); return }
         val key = pendingKey
         Toast.makeText(this, "Сохраняю…", Toast.LENGTH_SHORT).show()
         Thread {
@@ -1128,5 +1197,7 @@ class MainActivity : Activity(), XmbView.Listener {
         private const val REQ_GLOBAL_MUSIC = 104
         private const val REQ_ALARM_SOUND = 105
         private const val REQ_DEFAULT_ALARM_SOUND = 106
+        private const val REQ_PSP_MEM = 107
+        private const val REQ_PSP_GAMES = 108
     }
 }
