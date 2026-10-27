@@ -856,49 +856,135 @@ class XmbBackground {
         rock(c, w * 0.10f, horizon + (h - horizon) * 0.46f, unit * 0.014f)
         rock(c, w * 0.55f, horizon + (h - horizon) * 0.75f, unit * 0.045f)
 
-        // змейка: дышит, по телу бежит волна, медленно ползает, моргает
-        val len = min(w * 0.82f, unit * 0.88f)
-        val hc = len * 0.19f * (1f + 0.025f * sin(time * 1.3f))
-        val x0 = w * 0.09f + (w - len - w * 0.18f) * (0.5f + 0.5f * sin(time * 0.045f))
-        val base = horizon + unit * 0.015f
-        val n = 40
-        path.rewind()
-        for (i in 0..n) {
-            val t = i / n.toFloat()
-            val head = sin(PI.toFloat() * 0.5f * min(t / 0.16f, 1f))
-            val tail = 1f - smooth(0.30f, 1f, t)
-            val wave = 0.05f * sin(t * 11f - time * 2.2f) * t
-            val y = base - hc * (head * (0.15f + 0.85f * tail) + wave)
-            val x = x0 + len * t
-            snakeTop[i * 2] = x; snakeTop[i * 2 + 1] = y
-            if (i == 0) path.moveTo(x, base) else path.lineTo(x, y)
+        drawCreature(c, w, horizon, unit, time)
+    }
+
+    // ---------------- сама змейка ----------------
+
+    /** Контур тела: x 0..1 от носа к хвосту, y — высота над землёй (доля высоты тела). */
+    private val bodyX = floatArrayOf(
+        0.000f, 0.025f, 0.075f, 0.150f, 0.250f, 0.380f, 0.500f, 0.600f, 0.690f, 0.770f, 0.840f, 0.900f, 0.950f, 1.000f,
+        0.930f, 0.800f, 0.620f, 0.420f, 0.230f, 0.100f, 0.030f
+    )
+    private val bodyY = floatArrayOf(
+        0.300f, 0.580f, 0.800f, 0.940f, 1.000f, 1.000f, 0.950f, 0.840f, 0.680f, 0.500f, 0.330f, 0.200f, 0.120f, 0.070f,
+        0.020f, 0.000f, -0.020f, -0.030f, -0.040f, -0.020f, 0.060f
+    )
+    private val bx = FloatArray(bodyX.size)
+    private val by = FloatArray(bodyX.size)
+    private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = RadialGradient(0f, 0f, 1f, intArrayOf(Color.argb(90, 120, 80, 20), Color.TRANSPARENT), null, Shader.TileMode.CLAMP)
+    }
+
+    private fun drawCreature(c: Canvas, w: Float, horizon: Float, unit: Float, time: Float) {
+        // --- маршрут: ползёт влево, отдыхает и разворачивается, ползёт вправо, снова разворот ---
+        val cycle = 26f
+        val t = time % cycle
+        val baseL = min(w * 0.70f, unit * 0.78f)
+        val margin = baseL * 0.55f
+        val leftX = margin
+        val rightX = w - margin
+        var cx: Float
+        var dir: Float          // 1 — голова слева, -1 — голова справа
+        var flip = 1f           // сжатие при развороте
+        var moving = 0f
+        when {
+            t < 10f -> {        // ползёт влево
+                val p = smooth(0f, 1f, t / 10f)
+                cx = rightX + (leftX - rightX) * p
+                dir = 1f; moving = 1f
+            }
+            t < 13f -> {        // отдых, затем разворот
+                cx = leftX; dir = 1f
+                val q = ((t - 12f) / 1f).coerceIn(0f, 1f)
+                if (q > 0f) { flip = kotlin.math.cos(q * PI.toFloat()); if (flip < 0f) { dir = -1f; flip = -flip } }
+            }
+            t < 23f -> {        // ползёт вправо
+                val p = smooth(0f, 1f, (t - 13f) / 10f)
+                cx = leftX + (rightX - leftX) * p
+                dir = -1f; moving = 1f
+            }
+            else -> {           // отдых, разворот обратно
+                cx = rightX; dir = -1f
+                val q = ((t - 25f) / 1f).coerceIn(0f, 1f)
+                if (q > 0f) { flip = kotlin.math.cos(q * PI.toFloat()); if (flip < 0f) { dir = 1f; flip = -flip } }
+            }
         }
-        // нижний контур: слегка выпуклое брюшко
-        path.lineTo(x0 + len, base - hc * 0.02f)
-        path.quadTo(x0 + len * 0.5f, base + hc * 0.16f, x0 + len * 0.01f, base - hc * 0.05f)
-        path.close()
-        snakePaint.shader = LinearGradient(0f, base - hc, 0f, base,
-            intArrayOf(Color.rgb(176, 230, 112), Color.rgb(104, 182, 10), Color.rgb(78, 150, 0)),
+        flip = max(flip, 0.06f)
+
+        // --- дыхание: объём сохраняется — выше значит короче ---
+        val breath = sin(time * 2f * PI.toFloat() / 3.2f)
+        val hMul = 1f + 0.06f * breath
+        val lMul = 1f - 0.02f * breath
+        val L = baseL * lMul
+        val H = baseL * 0.30f * hMul
+
+        // --- волна сокращения от хвоста к голове во время ползания ---
+        val waveC = 1.15f - ((time * 0.9f) % 1.5f)
+        val wavePulse = moving * (0.5f + 0.5f * sin(time * 0.9f * 2f * PI.toFloat() / 1.5f))
+
+        for (k in bodyX.indices) {
+            val xn = bodyX[k]
+            val bump = exp(-((xn - waveC) / 0.11f) * ((xn - waveC) / 0.11f))
+            val yMul = 1f + moving * 0.16f * bump
+            val xShift = -moving * 0.025f * bump * wavePulse
+            bx[k] = (xn + xShift - 0.5f) * L
+            by[k] = -bodyY[k] * H * (if (bodyY[k] > 0f) yMul else 1f)
+        }
+
+        val base = horizon + unit * 0.02f
+        // мягкая тень на песке
+        c.save(); c.translate(cx, base + H * 0.06f); c.scale(L * 0.58f, H * 0.16f); c.drawCircle(0f, 0f, 1f, shadowPaint); c.restore()
+
+        c.save()
+        c.translate(cx, base)
+        c.scale(dir * flip, 1f)
+        closedSpline(path, bx, by)
+        snakePaint.shader = LinearGradient(0f, -H * 1.05f, 0f, H * 0.05f,
+            intArrayOf(Color.rgb(184, 236, 120), Color.rgb(112, 190, 18), Color.rgb(82, 154, 0)),
             floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
         c.drawPath(path, snakePaint)
+        // мягкий блик на спине
+        fill.color = Color.WHITE
+        fill.alpha = 45
+        c.drawOval(-L * 0.28f, -H * 0.92f, L * 0.05f, -H * 0.70f, fill)
         ink.strokeWidth = max(2.5f, unit * 0.008f)
         c.drawPath(path, ink)
 
-        // глаз (моргает раз в ~4 секунды)
-        val ex = x0 + len * 0.075f
-        val ey = base - hc * 0.62f
-        val blink = (time % 4.2f) < 0.14f
+        // глаз: моргает раз в ~4 секунды, на отдыхе — прикрыт чуть дольше
+        val ex = (0.13f - 0.5f) * L
+        val ey = -0.66f * H
+        val blink = (time % 4.1f) < 0.16f
         fill.color = Color.rgb(14, 14, 14)
         fill.alpha = 255
-        if (blink) c.drawRect(ex - unit * 0.009f, ey - unit * 0.0015f, ex + unit * 0.009f, ey + unit * 0.0015f, fill)
-        else c.drawCircle(ex, ey, unit * 0.0065f, fill)
+        if (blink) c.drawRect(ex - unit * 0.010f, ey - unit * 0.0016f, ex + unit * 0.010f, ey + unit * 0.0016f, fill)
+        else c.drawCircle(ex, ey, unit * 0.0075f, fill)
         fill.color = Color.WHITE
-        // улыбка
+        // улыбка от низа носа вверх
         path.rewind()
-        path.moveTo(x0 + len * 0.02f, base - hc * 0.10f)
-        path.quadTo(x0 + len * 0.11f, base - hc * 0.02f, x0 + len * 0.18f, base - hc * 0.30f)
-        ink.strokeWidth = max(2f, unit * 0.006f)
+        path.moveTo((0.02f - 0.5f) * L, -0.10f * H)
+        path.quadTo((0.14f - 0.5f) * L, -0.02f * H, (0.27f - 0.5f) * L, -0.30f * H)
+        ink.strokeWidth = max(2f, unit * 0.0065f)
         c.drawPath(path, ink)
+        c.restore()
+    }
+
+    /** Плавный замкнутый контур через точки (Catmull-Rom → кривые Безье). */
+    private fun closedSpline(p: Path, xs: FloatArray, ys: FloatArray) {
+        val n = xs.size
+        p.rewind()
+        p.moveTo(xs[0], ys[0])
+        for (i in 0 until n) {
+            val i0 = (i - 1 + n) % n
+            val i2 = (i + 1) % n
+            val i3 = (i + 2) % n
+            val c1x = xs[i] + (xs[i2] - xs[i0]) / 6f
+            val c1y = ys[i] + (ys[i2] - ys[i0]) / 6f
+            val c2x = xs[i2] - (xs[i3] - xs[i]) / 6f
+            val c2y = ys[i2] - (ys[i3] - ys[i]) / 6f
+            p.cubicTo(c1x, c1y, c2x, c2y, xs[i2], ys[i2])
+        }
+        p.close()
     }
 
     private fun smooth(e0: Float, e1: Float, x: Float): Float {
