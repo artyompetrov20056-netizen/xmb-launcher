@@ -17,7 +17,7 @@ import kotlin.math.max
 enum class FrameKind { NONE, BUBBLE, BEVEL, SQUARE, GLOW, ROUNDED, CARD, CHROME, HUD, PEBBLE, CRYSTAL }
 
 /** Анимированная сцена фона. */
-enum class Scene { WAVES, SPHERES, TILES, CUBES, SOFT_WAVE, LINES, RIBBONS, LIGHT, PARTICLES, CHROME, WEBCORE, SNAKE, CRYSTAL }
+enum class Scene { WAVES, SPHERES, TILES, CUBES, SOFT_WAVE, LINES, RIBBONS, LIGHT, PARTICLES, CHROME, WEBCORE, SNAKE, CRYSTAL, LIPS }
 
 /**
  * Стиль оформления: анимированный фон + вид иконок.
@@ -70,6 +70,7 @@ object VisualStyles {
             glyphInk = c(0xFF16250A),
         ),
         VisualStyle("Кристаллы", Scene.CRYSTAL, null, FrameKind.CRYSTAL, 0.95f, 2),
+        VisualStyle("Губы", Scene.LIPS, null, FrameKind.BUBBLE, 1f, 1),
     )
 
     val NAMES = ALL.map { it.name }

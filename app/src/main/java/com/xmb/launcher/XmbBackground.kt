@@ -49,6 +49,7 @@ class XmbBackground {
     private val path = Path()
 
     private val rnd = Random(7)
+    private val lips = LipsArt()
     private val sparkN = 70
     private val sparkX = FloatArray(sparkN) { rnd.nextFloat() }
     private val sparkY = FloatArray(sparkN) { rnd.nextFloat() - 0.5f }
@@ -200,6 +201,7 @@ class XmbBackground {
             Scene.WEBCORE -> drawWebcore(c, w, h, unit, time)
             Scene.SNAKE -> drawSnake(c, w, h, unit, time)
             Scene.CRYSTAL -> drawCrystalWorld(c, w, h, unit, time)
+            Scene.LIPS -> lips.draw(c, w, h, unit, time, accent())
         }
     }
 
