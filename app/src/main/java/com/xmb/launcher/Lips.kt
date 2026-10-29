@@ -63,9 +63,7 @@ class LipsArt {
         const val X1 = 1.15f
         const val Y0 = -0.62f
         const val Y1 = 1.30f
-        const val TOX = 0.06f
-        const val TSH = 0.10f
-        const val TL = 1.02f
+        const val TL = 1.18f
 
         fun lipAlbedo(acc: Int): Int {
             val hsv = FloatArray(3)
@@ -199,21 +197,41 @@ class LipsArt {
         Seg(1.0f, 0.0f, 0.93f, 0.32f, 0.56f, 0.72f, 0.0f, 0.74f),
         Seg(0.0f, 0.74f, -0.56f, 0.72f, -0.93f, 0.32f, -1.0f, 0.0f),
     )
-    private val tongueRaw = listOf(
-        Seg(-0.22f, 0.07f, -0.30f, 0.16f, -0.44f, 0.36f, -0.42f, 0.62f),
-        Seg(-0.42f, 0.62f, -0.40f, 0.88f, -0.22f, TL + 0.04f, 0.0f, TL + 0.05f),
-        Seg(0.0f, TL + 0.05f, 0.22f, TL + 0.04f, 0.40f, 0.88f, 0.42f, 0.62f),
-        Seg(0.42f, 0.62f, 0.44f, 0.36f, 0.30f, 0.16f, 0.22f, 0.07f),
-        Seg(0.22f, 0.07f, 0.12f, 0.04f, -0.12f, 0.04f, -0.22f, 0.07f),
+    // язык: широкий корень, прямой правый край, скошенный левый, кончик внизу справа
+    private val tongueSegs = listOf(
+        Seg(-0.37f, 0.09f, -0.12f, 0.06f, 0.12f, 0.06f, 0.36f, 0.09f),
+        Seg(0.36f, 0.09f, 0.40f, 0.40f, 0.40f, 0.80f, 0.36f, 1.00f),
+        Seg(0.36f, 1.00f, 0.33f, 1.12f, 0.26f, 1.18f, 0.20f, 1.18f),
+        Seg(0.20f, 1.18f, 0.10f, 1.17f, 0.0f, 1.08f, -0.12f, 0.92f),
+        Seg(-0.12f, 0.92f, -0.28f, 0.70f, -0.38f, 0.40f, -0.37f, 0.09f),
     )
     private val teethSegs = listOf(
         Seg(-0.52f, -0.10f, -0.30f, -0.15f, 0.30f, -0.15f, 0.52f, -0.10f),
         Seg(0.52f, -0.10f, 0.46f, -0.01f, -0.46f, -0.01f, -0.52f, -0.10f),
     )
 
-    private fun shear(sg: Seg): Seg {
-        fun sx(x: Float, y: Float) = x + TOX + TSH * max(0f, y - 0.05f)
-        return Seg(sx(sg.x0, sg.y0), sg.y0, sx(sg.x1, sg.y1), sg.y1, sx(sg.x2, sg.y2), sg.y2, sx(sg.x3, sg.y3), sg.y3)
+    private fun boxBlur(a: FloatArray, w: Int, h: Int, r: Int) {
+        val tmp = FloatArray(max(w, h))
+        val win = (2 * r + 1).toFloat()
+        for (y in 0 until h) {
+            var sum = 0f
+            val o = y * w
+            for (k in -r..r) sum += a[o + k.coerceIn(0, w - 1)]
+            for (x in 0 until w) {
+                tmp[x] = sum / win
+                sum += a[o + (x + r + 1).coerceAtMost(w - 1)] - a[o + (x - r).coerceAtLeast(0)]
+            }
+            System.arraycopy(tmp, 0, a, o, w)
+        }
+        for (x in 0 until w) {
+            var sum = 0f
+            for (k in -r..r) sum += a[k.coerceIn(0, h - 1) * w + x]
+            for (y in 0 until h) {
+                tmp[y] = sum / win
+                sum += a[(y + r + 1).coerceAtMost(h - 1) * w + x] - a[(y - r).coerceAtLeast(0) * w + x]
+            }
+            for (y in 0 until h) a[y * w + x] = tmp[y]
+        }
     }
 
     private fun build(sw: Int): Layers {
@@ -253,13 +271,13 @@ class LipsArt {
         val mUpper = mask(upperPath)
         val mLower = mask(path(lowerInner, lowerOuter))
         val mOpen = mask(path(upperInner.reversed().map { it.rev() }, lowerInner.reversed().map { it.rev() }))
-        val mTongue = mask(path(tongueRaw.map { shear(it) }))
+        val mTongue = mask(path(tongueSegs))
         val mTeethRaw = mask(path(teethSegs))
         val mTeeth = FloatArray(n) { mTeethRaw[it] * mOpen[it] }
         val lshRaw = mask(upperPath, blur = 0.03f * swf, dy = 0.05f * swf)
         tmpBmp.recycle()
 
-        fun dome(m: FloatArray, power: Float): FloatArray {
+        fun dome(m: FloatArray, power: Float, blur: Float = 0f): FloatArray {
             val inf = 1e9f
             val d = FloatArray(n) { if (m[it] > 0.5f) inf else 0f }
             val dg = 1.4142f
@@ -287,15 +305,27 @@ class LipsArt {
                 }
                 d[i] = v
             }
+            for (i in 0 until n) if (d[i] >= inf) d[i] = 0f
+            if (blur >= 2f) {
+                // сглаженный купол внутри, честный скат у краёв — без складки по середине
+                val b = d.copyOf()
+                val r = (blur / 2f).toInt().coerceAtLeast(1)
+                repeat(3) { boxBlur(b, bw, bh, r) }
+                for (i in 0 until n) {
+                    if (m[i] <= 0.5f) { d[i] = 0f; continue }
+                    val e = (d[i] / (blur * 0.6f)).coerceIn(0f, 1f)
+                    d[i] = d[i] * (1f - e) + max(b[i], d[i] * 0.5f) * e
+                }
+            }
             var mx = 1f
-            for (v in d) if (v < inf && v > mx) mx = v
-            for (i in 0 until n) d[i] = if (d[i] >= inf) 0f else (d[i] / mx).pow(power)
+            for (v in d) if (v > mx) mx = v
+            for (i in 0 until n) d[i] = (d[i] / mx).pow(power)
             return d
         }
 
         val hUp = dome(mUpper, 0.45f)
         val hLo = dome(mLower, 0.40f)
-        val hTo = dome(mTongue, 0.55f)
+        val hTo = dome(mTongue, 0.55f, swf * 0.10f)
         for (y in 0 until bh) for (x in 0 until bw) {
             val i = y * bw + x
             val lx = X0 + x / swf
@@ -306,9 +336,9 @@ class LipsArt {
             hUp[i] -= cr * 0.05f * hUp[i]
             hLo[i] -= cr * 0.06f * hLo[i]
             // бороздка посередине языка
-            val gcx = TOX + TSH * max(0f, ly - 0.05f)
-            val gd = (lx - gcx) / 0.07f
-            val groove = exp(-gd * gd) * ((ly - 0.12f) / 0.3f).coerceIn(0f, 1f) * ((TL - 0.12f - ly) / 0.3f).coerceIn(0f, 1f)
+            val gcx = 0.08f + 0.05f * ly
+            val gd = (lx - gcx) / 0.06f
+            val groove = exp(-gd * gd) * ((ly - 0.12f) / 0.12f).coerceIn(0f, 1f) * ((0.62f - ly) / 0.18f).coerceIn(0f, 1f)
             hTo[i] -= 0.30f * groove
         }
 
