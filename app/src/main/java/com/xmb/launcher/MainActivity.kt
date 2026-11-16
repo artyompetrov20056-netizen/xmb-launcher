@@ -148,6 +148,7 @@ class MainActivity : Activity(), XmbView.Listener {
         handler.post(timerTick)
         LockController.start(this)
         Ppsspp.refresh(this) { if (!isDestroyed) { refreshMenu(); offerGamesFolder(false) } }
+        Switch.refresh(this) { if (!isDestroyed) refreshMenu() }
         if (reopenLockSetup) {
             // Вернулись из системных настроек — показываем обновлённый список разрешений
             reopenLockSetup = false
@@ -350,9 +351,9 @@ class MainActivity : Activity(), XmbView.Listener {
                     appsOf { Kind.PHOTO in it.kinds }.filter { it.glyph != Glyph.EMPTY }),
             XmbCategory("music", "Музыка", Glyph.MUSIC, appsOf { Kind.MUSIC in it.kinds }),
             XmbCategory("video", "Видео", Glyph.VIDEO, appsOf { Kind.VIDEO in it.kinds }),
-            XmbCategory("game", "Игры", Glyph.GAME, pspItems().let { psp ->
-                if (psp.isEmpty()) appsOf { Kind.GAME in it.kinds }
-                else psp + appsOf { Kind.GAME in it.kinds }.filter { it.glyph != Glyph.EMPTY }
+            XmbCategory("game", "Игры", Glyph.GAME, (switchItems() + pspItems()).let { emu ->
+                if (emu.isEmpty()) appsOf { Kind.GAME in it.kinds }
+                else emu + appsOf { Kind.GAME in it.kinds }.filter { it.glyph != Glyph.EMPTY }
             }),
             XmbCategory("network", "Сеть", Glyph.NETWORK, appsOf { Kind.NETWORK in it.kinds }),
             XmbCategory("apps", "Приложения", Glyph.APPS, buildAppsItems(list)),
@@ -395,6 +396,124 @@ class MainActivity : Activity(), XmbView.Listener {
         sounds.back()
         refreshMenu()
         xmb.goToFirstItem()
+    }
+
+    // ---------------- Nintendo Switch ----------------
+
+    private fun switchItems(): List<XmbItem> {
+        val tree = Switch.tree(this)
+        if (Switch.emus.isEmpty() && tree == null) return emptyList()
+        val out = ArrayList<XmbItem>()
+        for (g in Switch.games) {
+            val emuName = Switch.emuLabel(Switch.gameEmu(this, g) ?: Switch.defaultEmu(this))
+                ?: Switch.emus.singleOrNull()?.label
+            out += XmbItem(g.title, "Switch" + (emuName?.let { " · $it" } ?: ""),
+                if (g.icon == null) Glyph.GAME else null, icon = g.icon, pic = g.pic,
+                key = SWITCH_KEY + g.docId,
+                onClick = { it.launchSwitch(g, forcePick = false) })
+        }
+        val sub = when {
+            Switch.emus.isEmpty() -> "Эмулятор Switch не найден — установите Eden, Citron, Sudachi или другой"
+            tree == null -> "Выберите папку с играми Switch"
+            else -> Switch.status.ifEmpty { "Папка: " + Switch.treeLabel(tree) }
+        }
+        out += XmbItem("Nintendo Switch", sub, Glyph.SETTINGS, onClick = { it.openSwitchMenu() })
+        return out
+    }
+
+    /** Запуск игры Switch: эмулятор игры → эмулятор по умолчанию → единственный → спросить. */
+    fun launchSwitch(g: Switch.Game, forcePick: Boolean) {
+        val emus = Switch.emus
+        if (emus.isEmpty()) {
+            Toast.makeText(this, "Эмулятор Switch не установлен", Toast.LENGTH_LONG).show(); return
+        }
+        val chosen = if (forcePick) null else
+            (Switch.gameEmu(this, g) ?: Switch.defaultEmu(this))?.let { p -> emus.firstOrNull { it.pkg == p } }
+                ?: emus.singleOrNull()
+        if (chosen != null) { startSwitch(g, chosen); return }
+        xmb.showOverlay(DialogOverlay("Запустить в…", g.title + " · выбор запомнится для этой игры",
+            emus.map { it.label }, pickSound = false) { pick ->
+            val e = emus[pick]
+            Switch.setGameEmu(this, g, e.pkg)
+            startSwitch(g, e)
+            refreshMenu()
+        })
+    }
+
+    private fun startSwitch(g: Switch.Game, e: Switch.Emu) {
+        sounds.launch()
+        if (!Switch.launch(this, g, e)) Toast.makeText(this, "Не удалось запустить игру в ${e.label}", Toast.LENGTH_SHORT).show()
+    }
+
+    /** Кнопка Y / удержание на игре Switch. */
+    private fun showSwitchGameActions(item: XmbItem) {
+        val id = item.key?.removePrefix(SWITCH_KEY) ?: return
+        val g = Switch.games.firstOrNull { it.docId == id } ?: return
+        val key = item.key ?: return
+        val own = Switch.gameEmu(this, g)
+        val opts = ArrayList<String>()
+        val acts = ArrayList<() -> Unit>()
+        opts += "Запустить"; acts += { launchSwitch(g, forcePick = false) }
+        opts += "Запустить в другом эмуляторе…"; acts += { launchSwitch(g, forcePick = true) }
+        if (own != null) { opts += "Сбросить выбор эмулятора"; acts += { Switch.setGameEmu(this, g, null); refreshMenu() } }
+        opts += if (media.hasBackground(key)) "Заменить фон" else "Выбрать фон"
+        acts += { pickFile(REQ_BG, key, "image/*") }
+        if (media.hasBackground(key)) {
+            opts += "Убрать фон"; acts += { sounds.ok(); media.removeBackground(key); xmb.refreshHover() }
+        }
+        opts += if (media.music(key) != null) "Заменить музыку (MP3)" else "Выбрать музыку (MP3)"
+        acts += { pickFile(REQ_APP_MUSIC, key, "audio/*") }
+        if (media.music(key) != null) {
+            opts += "Убрать музыку"; acts += { sounds.ok(); media.removeMusic(key); music.setHover(null) }
+        }
+        xmb.showOverlay(DialogOverlay(g.title, g.file + (Switch.emuLabel(own)?.let { " · $it" } ?: ""), opts) { pick ->
+            acts.getOrNull(pick)?.invoke()
+        })
+    }
+
+    fun openSwitchMenu() {
+        val tree = Switch.tree(this)
+        val def = Switch.emuLabel(Switch.defaultEmu(this)) ?: "спрашивать"
+        val found = if (Switch.emus.isEmpty()) "не найдены" else Switch.emus.joinToString { it.label }
+        val sub = "Папка: " + Switch.treeLabel(tree) + " · Эмуляторы: " + found + " · По умолчанию: " + def
+        val opts = arrayListOf("Выбрать папку с играми", "Эмулятор по умолчанию", "Обновить список")
+        if (tree != null) opts += "Отключить папку"
+        xmb.showOverlay(DialogOverlay("Nintendo Switch", sub, opts) { pick ->
+            when (pick) {
+                0 -> pickTree(REQ_SWITCH_GAMES, null, tree?.let {
+                    try { android.provider.DocumentsContract.buildDocumentUriUsingTree(it,
+                        android.provider.DocumentsContract.getTreeDocumentId(it)) } catch (_: Exception) { null }
+                })
+                1 -> pickSwitchDefault()
+                2 -> Switch.refresh(this) { refreshMenu() }
+                3 -> { Switch.setTree(this, null); Switch.refresh(this) { refreshMenu() }; refreshMenu() }
+            }
+        })
+    }
+
+    private fun pickSwitchDefault() {
+        val emus = Switch.emus
+        if (emus.isEmpty()) { Toast.makeText(this, "Эмуляторы Switch не найдены", Toast.LENGTH_LONG).show(); return }
+        val cur = Switch.defaultEmu(this)
+        val names = listOf("Спрашивать для каждой игры") + emus.map { it.label }
+        val checked = emus.indexOfFirst { it.pkg == cur } + 1
+        xmb.showOverlay(DialogOverlay("Эмулятор по умолчанию",
+            "Игры, для которых вы выбрали эмулятор отдельно, запускаются в нём", names, selected = checked, checked = checked) { pick ->
+            Switch.setDefaultEmu(this, if (pick == 0) null else emus[pick - 1].pkg)
+            refreshMenu()
+        })
+    }
+
+    private fun onSwitchTree(uri: android.net.Uri) {
+        try {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (_: Exception) {}
+        Switch.setTree(this, uri)
+        Toast.makeText(this, "Ищу игры Switch…", Toast.LENGTH_SHORT).show()
+        Switch.refresh(this) {
+            refreshMenu()
+            Toast.makeText(this, Switch.status, Toast.LENGTH_LONG).show()
+        }
     }
 
     // ---------------- PPSSPP ----------------
@@ -608,7 +727,10 @@ class MainActivity : Activity(), XmbView.Listener {
         )
     }
 
-    override fun onItemOptions(item: XmbItem) = showAppActions(item, withOpen = true, back = null)
+    override fun onItemOptions(item: XmbItem) {
+        if (item.key?.startsWith(SWITCH_KEY) == true) { showSwitchGameActions(item); return }
+        showAppActions(item, withOpen = true, back = null)
+    }
 
     override fun onOpenSearch() = openSearch()
 
@@ -926,6 +1048,7 @@ class MainActivity : Activity(), XmbView.Listener {
         val uri = data?.data
         if (resultCode != RESULT_OK || uri == null) return
         if (requestCode == REQ_PSP_MEM || requestCode == REQ_PSP_GAMES) { onPspTree(requestCode == REQ_PSP_GAMES, uri); return }
+        if (requestCode == REQ_SWITCH_GAMES) { onSwitchTree(uri); return }
         val key = pendingKey
         Toast.makeText(this, "Сохраняю…", Toast.LENGTH_SHORT).show()
         Thread {
@@ -1202,6 +1325,7 @@ class MainActivity : Activity(), XmbView.Listener {
 
     /** Удержание приложения — меню: добавить/убрать из избранного, удалить. */
     override fun onItemLongPress(item: XmbItem) {
+        if (item.key?.startsWith(SWITCH_KEY) == true) { showSwitchGameActions(item); return }
         showAppActions(item, withOpen = false, back = null)
     }
 
@@ -1227,5 +1351,7 @@ class MainActivity : Activity(), XmbView.Listener {
         private const val REQ_DEFAULT_ALARM_SOUND = 106
         private const val REQ_PSP_MEM = 107
         private const val REQ_PSP_GAMES = 108
+        private const val REQ_SWITCH_GAMES = 109
+        private const val SWITCH_KEY = "switch:"
     }
 }
