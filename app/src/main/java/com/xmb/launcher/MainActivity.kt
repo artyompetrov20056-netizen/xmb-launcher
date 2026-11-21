@@ -2,6 +2,7 @@ package com.xmb.launcher
 
 import android.app.Activity
 import android.content.Intent
+import android.graphics.Color
 import android.content.SharedPreferences
 import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherApps
@@ -24,6 +25,8 @@ import java.util.Locale
 class MainActivity : Activity(), XmbView.Listener {
 
     private lateinit var xmb: XmbView
+    private lateinit var video: VideoBackdrop
+    private var videoItem: XmbItem? = null
     private lateinit var prefs: SharedPreferences
     lateinit var sounds: XmbSounds
         private set
@@ -114,7 +117,15 @@ class MainActivity : Activity(), XmbView.Listener {
             xmb.applyInsets(insets)
             insets
         }
-        setContentView(xmb)
+        video = VideoBackdrop(this)
+        xmb.frameHook = { on, accent ->
+            if (video.active != on) xmb.post { video.active = on }
+            if (on) video.setTint(videoTint(accent))
+        }
+        setContentView(android.widget.FrameLayout(this).apply {
+            addView(video)
+            addView(xmb)
+        })
         setupWindow()
 
         xmb.setCategories(buildCategories())
@@ -144,6 +155,7 @@ class MainActivity : Activity(), XmbView.Listener {
         super.onResume()
         sounds.start()
         music.resume()
+        video.setResumed(true)
         handler.removeCallbacks(timerTick)
         handler.post(timerTick)
         LockController.start(this)
@@ -158,6 +170,7 @@ class MainActivity : Activity(), XmbView.Listener {
     override fun onPause() {
         sounds.stopSoon()
         music.pause()
+        video.setResumed(false)
         handler.removeCallbacks(timerTick)
         super.onPause()
     }
@@ -255,6 +268,12 @@ class MainActivity : Activity(), XmbView.Listener {
             onClick = { it.openStylePicker() }
         )
         styleItem = styleIt
+        val videoIt = XmbItem(
+            "Видео-тема", videoSubtitle(),
+            glyph = Glyph.DISPLAY,
+            onClick = { it.openVideoMenu() }
+        )
+        videoItem = videoIt
 
         val theme = XmbItem(
             "Цвет темы", "Сейчас: ${themeName()}",
@@ -307,6 +326,7 @@ class MainActivity : Activity(), XmbView.Listener {
             settingsItem("Громкость", "Громкость и мелодии телефона", Glyph.SOUND,
                 Intent(Settings.ACTION_SOUND_SETTINGS)),
             styleIt,
+            videoIt,
             theme,
             sound,
             pad,
@@ -537,9 +557,66 @@ class MainActivity : Activity(), XmbView.Listener {
                 xmb.setVisualStyle(VisualStyles.ALL[it])
                 styleItem?.subtitle = "Сейчас: ${VisualStyles.ALL[it].name}"
                 themeItem?.subtitle = "Сейчас: ${themeName()}"
+                if (VisualStyles.ALL[it].scene == Scene.VIDEO && !VideoBackdrop.file(this, false).exists()) {
+                    Toast.makeText(this, "Выберите видео для темы", Toast.LENGTH_LONG).show()
+                    pickFile(REQ_VIDEO, null, "video/*")
+                }
             },
             onCancel = { xmb.setVisualStyle(VisualStyles.ALL[original]) },
         )
+    }
+
+    // ---------------- Видео-тема ----------------
+
+    private fun videoTintMode() = prefs.getInt("video_tint", 0)
+
+    /** Цвет, на который умножается ролик: белый — без окраски, иначе смесь белого с цветом темы. */
+    private fun videoTint(accent: Int): Int {
+        val k = when (videoTintMode()) { 1 -> 0.35f; 2 -> 0.7f; else -> return Color.WHITE }
+        fun ch(v: Int) = (255 + (v - 255) * k).toInt().coerceIn(0, 255)
+        return Color.rgb(ch(Color.red(accent)), ch(Color.green(accent)), ch(Color.blue(accent)))
+    }
+
+    private fun videoSubtitle(): String {
+        val v = VideoBackdrop.file(this, false).exists()
+        val l = VideoBackdrop.file(this, true).exists()
+        val tint = listOf("без окраски", "цвет темы, мягко", "цвет темы, ярко")[videoTintMode().coerceIn(0, 2)]
+        return when {
+            !v -> "Видео не выбрано — включите стиль «Видео» и выберите ролик"
+            l -> "Своё видео для вертикали и горизонтали · $tint"
+            else -> "Видео выбрано · $tint"
+        }
+    }
+
+    fun openVideoMenu() {
+        val hasLand = VideoBackdrop.file(this, true).exists()
+        val opts = mutableListOf(
+            "Видео для вертикального экрана",
+            "Отдельное видео для горизонтального экрана",
+            "Окраска: нет (как в видео)",
+            "Окраска: цвет темы, мягко",
+            "Окраска: цвет темы, ярко",
+        )
+        if (hasLand) opts += "Убрать отдельное горизонтальное видео"
+        xmb.showOverlay(DialogOverlay("Видео-тема", "Цвет окраски задаётся пунктом «Цвет темы»", opts,
+            selected = 0, checked = 2 + videoTintMode()) { pick ->
+            when (pick) {
+                0 -> pickFile(REQ_VIDEO, null, "video/*")
+                1 -> pickFile(REQ_VIDEO_LAND, null, "video/*")
+                2, 3, 4 -> {
+                    prefs.edit().putInt("video_tint", pick - 2).apply()
+                    videoItem?.subtitle = videoSubtitle()
+                    xmb.invalidate()
+                }
+                5 -> {
+                    VideoBackdrop.file(this, true).delete()
+                    video.reload()
+                    videoItem?.subtitle = videoSubtitle()
+                }
+            }
+            if (pick in 2..5 && VisualStyles.current(this).scene != Scene.VIDEO)
+                Toast.makeText(this, "Видно в стиле оформления «Видео»", Toast.LENGTH_SHORT).show()
+        })
     }
 
     fun openThemePicker() {
@@ -933,6 +1010,7 @@ class MainActivity : Activity(), XmbView.Listener {
                 REQ_BG -> key != null && media.saveBackground(uri, key, landscape = false)
                 REQ_BG_LAND -> key != null && media.saveBackground(uri, key, landscape = true)
                 REQ_APP_MUSIC -> key != null && media.saveMusic(uri, key)
+                REQ_VIDEO, REQ_VIDEO_LAND -> VideoBackdrop.save(this, uri, requestCode == REQ_VIDEO_LAND)
                 REQ_GLOBAL_MUSIC -> media.saveMusic(uri, null)
                 REQ_ALARM_SOUND -> {
                     val id = key?.toIntOrNull()
@@ -953,6 +1031,11 @@ class MainActivity : Activity(), XmbView.Listener {
                     return@runOnUiThread
                 }
                 when (requestCode) {
+                    REQ_VIDEO, REQ_VIDEO_LAND -> {
+                        video.reload()
+                        videoItem?.subtitle = videoSubtitle()
+                        Toast.makeText(this, "Видео установлено", Toast.LENGTH_SHORT).show()
+                    }
                     REQ_ALARM_SOUND, REQ_DEFAULT_ALARM_SOUND -> {
                         Toast.makeText(this, "Мелодия будильника установлена", Toast.LENGTH_SHORT).show()
                         refreshMenu()
@@ -1227,5 +1310,7 @@ class MainActivity : Activity(), XmbView.Listener {
         private const val REQ_DEFAULT_ALARM_SOUND = 106
         private const val REQ_PSP_MEM = 107
         private const val REQ_PSP_GAMES = 108
+        private const val REQ_VIDEO = 109
+        private const val REQ_VIDEO_LAND = 110
     }
 }

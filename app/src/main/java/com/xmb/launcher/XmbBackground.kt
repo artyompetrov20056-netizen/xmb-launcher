@@ -178,6 +178,7 @@ class XmbBackground {
         if (w <= 0f || h <= 0f) return
         val dt = (time - lastTime).coerceIn(0f, 0.05f)
         lastTime = time
+        if (style.scene == Scene.VIDEO) return   // под меню проигрывается ролик (VideoBackdrop)
 
         val cols = IntArray(3) { Color.rgb(curColors[it * 3].toInt(), curColors[it * 3 + 1].toInt(), curColors[it * 3 + 2].toInt()) }
         if (!cols.contentEquals(shaderColors) || shaderH != height) {
@@ -202,6 +203,7 @@ class XmbBackground {
             Scene.SNAKE -> drawSnake(c, w, h, unit, time)
             Scene.CRYSTAL -> drawCrystalWorld(c, w, h, unit, time)
             Scene.LIPS -> lips.draw(c, w, h, unit, time, accent())
+            Scene.VIDEO -> {}
         }
     }
 

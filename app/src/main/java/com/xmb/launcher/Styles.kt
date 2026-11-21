@@ -17,7 +17,7 @@ import kotlin.math.max
 enum class FrameKind { NONE, BUBBLE, BEVEL, SQUARE, GLOW, ROUNDED, CARD, CHROME, HUD, PEBBLE, CRYSTAL }
 
 /** Анимированная сцена фона. */
-enum class Scene { WAVES, SPHERES, TILES, CUBES, SOFT_WAVE, LINES, RIBBONS, LIGHT, PARTICLES, CHROME, WEBCORE, SNAKE, CRYSTAL, LIPS }
+enum class Scene { WAVES, SPHERES, TILES, CUBES, SOFT_WAVE, LINES, RIBBONS, LIGHT, PARTICLES, CHROME, WEBCORE, SNAKE, CRYSTAL, LIPS, VIDEO }
 
 /**
  * Стиль оформления: анимированный фон + вид иконок.
@@ -67,6 +67,8 @@ object VisualStyles {
         ),
         VisualStyle("Кристаллы", Scene.CRYSTAL, null, FrameKind.CRYSTAL, 0.95f, 2),
         VisualStyle("Губы", Scene.LIPS, null, FrameKind.BUBBLE, 1f, 1),
+        VisualStyle("Видео", Scene.VIDEO, null, FrameKind.ROUNDED, 1f, 2,
+            ink = c(0xFF2A2A33)),
     )
 
     val NAMES = ALL.map { it.name }
@@ -109,6 +111,9 @@ object VisualStyles {
     fun drawFrame(c: Canvas, s: VisualStyle, cx: Float, cy: Float, size: Float, alpha: Int, sel: Float, time: Float = 0f, app: Boolean = false) {
         val a = alpha.coerceIn(0, 255) / 255f
         val lw = (size * 0.03f).coerceAtLeast(1.2f)
+        // светлый фон (видео) — рамки тёмные
+        val base = if (s.scene == Scene.VIDEO) s.ink else Color.WHITE
+        fill.color = base; line.color = base
         when (s.frame) {
             FrameKind.NONE -> {}
             FrameKind.GLOW -> {

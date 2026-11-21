@@ -414,6 +414,7 @@ class XmbView(context: Context) : View(context) {
 
         bg.draw(c, width, height, unit, orient, time)
         VisualStyles.accent = bg.accent()
+        frameHook?.invoke(bg.style.scene == Scene.VIDEO, bg.accent())
         drawPicture(c)
         if (categories.isNotEmpty()) {
             // наклон всего меню (стиль «Хром»)
@@ -584,6 +585,9 @@ class XmbView(context: Context) : View(context) {
         FrameKind.BUBBLE, FrameKind.CHROME, FrameKind.CRYSTAL -> 0.6f
         else -> 0.35f
     }
+
+    /** Вызывается каждый кадр: (включён ли видеофон, цвет темы). */
+    var frameHook: ((Boolean, Int) -> Unit)? = null
 
     /** Текущий стиль оформления (фон + вид иконок). */
     fun setVisualStyle(s: VisualStyle) {
