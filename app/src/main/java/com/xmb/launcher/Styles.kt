@@ -58,10 +58,6 @@ object VisualStyles {
         VisualStyle("Глубина", Scene.LIGHT, intArrayOf(c(0xFF02060F), c(0xFF0B2A5E), c(0xFF01040C)), FrameKind.ROUNDED, 0.7f, 2),
         VisualStyle("Частицы", Scene.PARTICLES, intArrayOf(c(0xFF060606), c(0xFF141417), c(0xFF020202)), FrameKind.CARD, 0.65f, 2),
         VisualStyle(
-            "Хром", Scene.CHROME, intArrayOf(c(0xFF07021A), c(0xFF31237C), c(0xFF0A0322)), FrameKind.CHROME, 1.15f, 1,
-            tilt = -7f,
-        ),
-        VisualStyle(
             "Веб-кор", Scene.WEBCORE, intArrayOf(c(0xFF080C06), c(0xFF1A2412), c(0xFF050704)), FrameKind.HUD, 0.8f, 2,
             layout = 1, ink = c(0xFFD2DB9C), iconFilter = 1,
         ),
@@ -75,8 +71,15 @@ object VisualStyles {
 
     val NAMES = ALL.map { it.name }
 
-    fun index(ctx: Context) = ctx.getSharedPreferences("xmb", Context.MODE_PRIVATE)
-        .getInt("visual_style", 0).coerceIn(0, ALL.lastIndex)
+    fun index(ctx: Context): Int {
+        val p = ctx.getSharedPreferences("xmb", Context.MODE_PRIVATE)
+        if (!p.getBoolean("style_no_chrome", false)) {   // тема «Хром» (№9) удалена в 3.5
+            val old = p.getInt("visual_style", 0)
+            val fixed = when { old == 9 -> 0; old > 9 -> old - 1; else -> old }
+            p.edit().putInt("visual_style", fixed).putBoolean("style_no_chrome", true).apply()
+        }
+        return p.getInt("visual_style", 0).coerceIn(0, ALL.lastIndex)
+    }
 
     fun current(ctx: Context) = ALL[index(ctx)]
 
