@@ -30,6 +30,10 @@ class VideoBackdrop(ctx: Context) : FrameLayout(ctx), TextureView.SurfaceTexture
     private var tint = Color.WHITE
     private val layerPaint = Paint()
     private val box = Rect()
+    /** Полоски поверх верхнего и нижнего края ролика: у многих роликов там тёмная строка пикселей. */
+    private val edgeTop = android.view.View(ctx)
+    private val edgeBottom = android.view.View(ctx)
+    private var edge = 0
 
     var active = false
         set(v) {
@@ -43,6 +47,7 @@ class VideoBackdrop(ctx: Context) : FrameLayout(ctx), TextureView.SurfaceTexture
         setBackgroundColor(Color.WHITE)
         tex.surfaceTextureListener = this
         addView(tex)
+        for (e in arrayOf(edgeTop, edgeBottom)) { e.setBackgroundColor(Color.WHITE); addView(e) }
         visibility = GONE
     }
 
@@ -59,6 +64,7 @@ class VideoBackdrop(ctx: Context) : FrameLayout(ctx), TextureView.SurfaceTexture
         if (c == tint) return
         tint = c
         setBackgroundColor(c)
+        edgeTop.setBackgroundColor(c); edgeBottom.setBackgroundColor(c)
         layerPaint.colorFilter = if (c == Color.WHITE) null else LightingColorFilter(c, 0)
         tex.setLayerPaint(layerPaint)
     }
@@ -66,6 +72,7 @@ class VideoBackdrop(ctx: Context) : FrameLayout(ctx), TextureView.SurfaceTexture
     // ---------------- размещение ----------------
 
     private fun place(w: Int, h: Int) {
+        edge = 0
         if (vw <= 0 || vh <= 0) { box.set(0, 0, w, h); return }
         val land = w > h
         if ((vw > vh) == land) {
@@ -78,6 +85,7 @@ class VideoBackdrop(ctx: Context) : FrameLayout(ctx), TextureView.SurfaceTexture
         // вертикальный ролик: прижат к низу экрана, остальное — цвет фона
         val s = if (land) h / vh.toFloat() else h * 0.80f / vh
         val dw = (vw * s).toInt(); val dh = (vh * s).toInt()
+        edge = kotlin.math.ceil(s * 3f).toInt().coerceAtLeast(2)
         var left = if (land) (w * 0.70f).toInt() - dw / 2 else (w - dw) / 2
         if (land) left = left.coerceAtMost(w - dw)
         box.set(left, h - dh, left + dw, h)
@@ -90,11 +98,15 @@ class VideoBackdrop(ctx: Context) : FrameLayout(ctx), TextureView.SurfaceTexture
         place(w, h)
         tex.measure(MeasureSpec.makeMeasureSpec(box.width().coerceAtLeast(1), MeasureSpec.EXACTLY),
             MeasureSpec.makeMeasureSpec(box.height().coerceAtLeast(1), MeasureSpec.EXACTLY))
+        for (e in arrayOf(edgeTop, edgeBottom)) e.measure(MeasureSpec.makeMeasureSpec(box.width().coerceAtLeast(1), MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(edge, MeasureSpec.EXACTLY))
     }
 
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         place(r - l, b - t)
         tex.layout(box.left, box.top, box.right, box.bottom)
+        edgeTop.layout(box.left, box.top, box.right, box.top + edge)
+        edgeBottom.layout(box.left, box.bottom - edge, box.right, box.bottom)
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
