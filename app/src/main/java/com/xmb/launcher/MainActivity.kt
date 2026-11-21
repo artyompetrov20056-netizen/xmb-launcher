@@ -269,7 +269,7 @@ class MainActivity : Activity(), XmbView.Listener {
         )
         styleItem = styleIt
         val videoIt = XmbItem(
-            "Видео-тема", videoSubtitle(),
+            "Свой фон", videoSubtitle(),
             glyph = Glyph.DISPLAY,
             onClick = { it.openVideoMenu() }
         )
@@ -558,8 +558,8 @@ class MainActivity : Activity(), XmbView.Listener {
                 styleItem?.subtitle = "Сейчас: ${VisualStyles.ALL[it].name}"
                 themeItem?.subtitle = "Сейчас: ${themeName()}"
                 if (VisualStyles.ALL[it].scene == Scene.VIDEO && !VideoBackdrop.file(this, false).exists()) {
-                    Toast.makeText(this, "Выберите видео для темы", Toast.LENGTH_LONG).show()
-                    pickFile(REQ_VIDEO, null, "video/*")
+                    Toast.makeText(this, "Выберите видео или фото для фона", Toast.LENGTH_LONG).show()
+                    pickFile(REQ_VIDEO, null, MEDIA_MIME)
                 }
             },
             onCancel = { xmb.setVisualStyle(VisualStyles.ALL[original]) },
@@ -582,27 +582,27 @@ class MainActivity : Activity(), XmbView.Listener {
         val l = VideoBackdrop.file(this, true).exists()
         val tint = listOf("без окраски", "цвет темы, мягко", "цвет темы, ярко")[videoTintMode().coerceIn(0, 2)]
         return when {
-            !v -> "Видео не выбрано — включите стиль «Видео» и выберите ролик"
-            l -> "Своё видео для вертикали и горизонтали · $tint"
-            else -> "Видео выбрано · $tint"
+            !v -> "Видео или фото не выбрано — включите стиль «Свой фон»"
+            l -> "Отдельно для вертикали и горизонтали · $tint"
+            else -> "Выбрано · $tint"
         }
     }
 
     fun openVideoMenu() {
         val hasLand = VideoBackdrop.file(this, true).exists()
         val opts = mutableListOf(
-            "Видео для вертикального экрана",
-            "Отдельное видео для горизонтального экрана",
-            "Окраска: нет (как в видео)",
+            "Видео или фото для вертикального экрана",
+            "Отдельное видео или фото для горизонтального экрана",
+            "Окраска: нет (как есть)",
             "Окраска: цвет темы, мягко",
             "Окраска: цвет темы, ярко",
         )
-        if (hasLand) opts += "Убрать отдельное горизонтальное видео"
-        xmb.showOverlay(DialogOverlay("Видео-тема", "Цвет окраски задаётся пунктом «Цвет темы»", opts,
+        if (hasLand) opts += "Убрать отдельный горизонтальный фон"
+        xmb.showOverlay(DialogOverlay("Свой фон", "Цвет окраски задаётся пунктом «Цвет темы»", opts,
             selected = 0, checked = 2 + videoTintMode()) { pick ->
             when (pick) {
-                0 -> pickFile(REQ_VIDEO, null, "video/*")
-                1 -> pickFile(REQ_VIDEO_LAND, null, "video/*")
+                0 -> pickFile(REQ_VIDEO, null, MEDIA_MIME)
+                1 -> pickFile(REQ_VIDEO_LAND, null, MEDIA_MIME)
                 2, 3, 4 -> {
                     prefs.edit().putInt("video_tint", pick - 2).apply()
                     videoItem?.subtitle = videoSubtitle()
@@ -615,7 +615,7 @@ class MainActivity : Activity(), XmbView.Listener {
                 }
             }
             if (pick in 2..5 && VisualStyles.current(this).scene != Scene.VIDEO)
-                Toast.makeText(this, "Видно в стиле оформления «Видео»", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Видно в стиле оформления «Свой фон»", Toast.LENGTH_SHORT).show()
         })
     }
 
@@ -983,6 +983,7 @@ class MainActivity : Activity(), XmbView.Listener {
         val i = Intent(Intent.ACTION_OPEN_DOCUMENT)
             .addCategory(Intent.CATEGORY_OPENABLE)
             .setType(mime)
+        if (mime == MEDIA_MIME) i.putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("video/*", "image/*"))
         try {
             @Suppress("DEPRECATION")
             startActivityForResult(i, request)
@@ -1034,7 +1035,7 @@ class MainActivity : Activity(), XmbView.Listener {
                     REQ_VIDEO, REQ_VIDEO_LAND -> {
                         video.reload()
                         videoItem?.subtitle = videoSubtitle()
-                        Toast.makeText(this, "Видео установлено", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, "Фон установлен", Toast.LENGTH_SHORT).show()
                     }
                     REQ_ALARM_SOUND, REQ_DEFAULT_ALARM_SOUND -> {
                         Toast.makeText(this, "Мелодия будильника установлена", Toast.LENGTH_SHORT).show()
@@ -1310,6 +1311,7 @@ class MainActivity : Activity(), XmbView.Listener {
         private const val REQ_DEFAULT_ALARM_SOUND = 106
         private const val REQ_PSP_MEM = 107
         private const val REQ_PSP_GAMES = 108
+        private const val MEDIA_MIME = "*/*"
         private const val REQ_VIDEO = 109
         private const val REQ_VIDEO_LAND = 110
     }

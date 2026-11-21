@@ -67,7 +67,7 @@ object VisualStyles {
         ),
         VisualStyle("Кристаллы", Scene.CRYSTAL, null, FrameKind.CRYSTAL, 0.95f, 2),
         VisualStyle("Губы", Scene.LIPS, null, FrameKind.BUBBLE, 1f, 1),
-        VisualStyle("Видео", Scene.VIDEO, null, FrameKind.ROUNDED, 1f, 2,
+        VisualStyle("Свой фон", Scene.VIDEO, null, FrameKind.ROUNDED, 1f, 2,
             ink = c(0xFF2A2A33)),
     )
 

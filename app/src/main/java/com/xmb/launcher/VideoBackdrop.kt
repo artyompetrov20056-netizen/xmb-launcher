@@ -21,6 +21,10 @@ import java.io.File
 class VideoBackdrop(ctx: Context) : FrameLayout(ctx), TextureView.SurfaceTextureListener {
 
     private val tex = TextureView(ctx)
+    /** Для фото вместо ролика. */
+    private val pic = android.widget.ImageView(ctx).apply { scaleType = android.widget.ImageView.ScaleType.FIT_XY; visibility = GONE }
+    private var picFile: File? = null
+    private var picStamp = 0L
     private var player: MediaPlayer? = null
     private var surface: Surface? = null
     private var playing: File? = null
@@ -47,6 +51,7 @@ class VideoBackdrop(ctx: Context) : FrameLayout(ctx), TextureView.SurfaceTexture
         setBackgroundColor(Color.WHITE)
         tex.surfaceTextureListener = this
         addView(tex)
+        addView(pic)
         for (e in arrayOf(edgeTop, edgeBottom)) { e.setBackgroundColor(Color.WHITE); addView(e) }
         visibility = GONE
     }
@@ -58,7 +63,7 @@ class VideoBackdrop(ctx: Context) : FrameLayout(ctx), TextureView.SurfaceTexture
     }
 
     /** Перечитать файлы (после выбора нового видео). */
-    fun reload() { stop(); sync() }
+    fun reload() { stop(); picFile = null; sync() }
 
     fun setTint(c: Int) {
         if (c == tint) return
@@ -67,6 +72,7 @@ class VideoBackdrop(ctx: Context) : FrameLayout(ctx), TextureView.SurfaceTexture
         edgeTop.setBackgroundColor(c); edgeBottom.setBackgroundColor(c)
         layerPaint.colorFilter = if (c == Color.WHITE) null else LightingColorFilter(c, 0)
         tex.setLayerPaint(layerPaint)
+        pic.colorFilter = layerPaint.colorFilter
     }
 
     // ---------------- размещение ----------------
@@ -75,8 +81,8 @@ class VideoBackdrop(ctx: Context) : FrameLayout(ctx), TextureView.SurfaceTexture
         edge = 0
         if (vw <= 0 || vh <= 0) { box.set(0, 0, w, h); return }
         val land = w > h
-        if ((vw > vh) == land) {
-            // ролик той же ориентации, что и экран — на весь экран
+        if (pic.visibility == VISIBLE || (vw > vh) == land) {
+            // фото или ролик той же ориентации, что и экран — на весь экран
             val s = maxOf(w / vw.toFloat(), h / vh.toFloat())
             val dw = (vw * s).toInt(); val dh = (vh * s).toInt()
             box.set((w - dw) / 2, (h - dh) / 2, (w - dw) / 2 + dw, (h - dh) / 2 + dh)
@@ -98,6 +104,8 @@ class VideoBackdrop(ctx: Context) : FrameLayout(ctx), TextureView.SurfaceTexture
         place(w, h)
         tex.measure(MeasureSpec.makeMeasureSpec(box.width().coerceAtLeast(1), MeasureSpec.EXACTLY),
             MeasureSpec.makeMeasureSpec(box.height().coerceAtLeast(1), MeasureSpec.EXACTLY))
+        pic.measure(MeasureSpec.makeMeasureSpec(box.width().coerceAtLeast(1), MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(box.height().coerceAtLeast(1), MeasureSpec.EXACTLY))
         for (e in arrayOf(edgeTop, edgeBottom)) e.measure(MeasureSpec.makeMeasureSpec(box.width().coerceAtLeast(1), MeasureSpec.EXACTLY),
             MeasureSpec.makeMeasureSpec(edge, MeasureSpec.EXACTLY))
     }
@@ -105,6 +113,7 @@ class VideoBackdrop(ctx: Context) : FrameLayout(ctx), TextureView.SurfaceTexture
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         place(r - l, b - t)
         tex.layout(box.left, box.top, box.right, box.bottom)
+        pic.layout(box.left, box.top, box.right, box.bottom)
         edgeTop.layout(box.left, box.top, box.right, box.top + edge)
         edgeBottom.layout(box.left, box.bottom - edge, box.right, box.bottom)
     }
@@ -116,6 +125,45 @@ class VideoBackdrop(ctx: Context) : FrameLayout(ctx), TextureView.SurfaceTexture
 
     // ---------------- проигрывание ----------------
 
+    private fun chosen(): File? {
+        val land = width > height
+        return file(context, land).takeIf { land && it.exists() } ?: file(context, false).takeIf { it.exists() }
+    }
+
+    /** Фото показываем картинкой (без плеера). Возвращает true, если выбранный файл — фото. */
+    private fun showPicture(): Boolean {
+        val f = chosen()
+        val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        if (f != null) android.graphics.BitmapFactory.decodeFile(f.path, o)
+        if (f == null || o.outWidth <= 0) {
+            if (pic.visibility != GONE) { pic.visibility = GONE; pic.setImageDrawable(null); picFile = null }
+            edgeTop.visibility = VISIBLE; edgeBottom.visibility = VISIBLE
+            return false
+        }
+        if (f != picFile || f.lastModified() != picStamp) {
+            val target = maxOf(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
+            var sample = 1
+            while (maxOf(o.outWidth, o.outHeight) / (sample * 2) >= target) sample *= 2
+            var bmp = android.graphics.BitmapFactory.decodeFile(f.path, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+                ?: return false
+            val rot = try {
+                when (android.media.ExifInterface(f.path).getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION, 1)) {
+                    6 -> 90f; 3 -> 180f; 8 -> 270f; else -> 0f
+                }
+            } catch (_: Exception) { 0f }
+            if (rot != 0f) bmp = android.graphics.Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height,
+                android.graphics.Matrix().apply { postRotate(rot) }, true)
+            pic.setImageBitmap(bmp)
+            picFile = f; picStamp = f.lastModified()
+            vw = bmp.width; vh = bmp.height
+            requestLayout()
+        }
+        stop()
+        pic.visibility = VISIBLE
+        edgeTop.visibility = GONE; edgeBottom.visibility = GONE   // у фото нет тёмной строки по краю
+        return true
+    }
+
     private fun wanted(): File? {
         if (!active || !resumed || surface == null) return null
         val land = width > height
@@ -123,6 +171,7 @@ class VideoBackdrop(ctx: Context) : FrameLayout(ctx), TextureView.SurfaceTexture
     }
 
     private fun sync() {
+        if (active && showPicture()) return
         val f = wanted()
         if (f == null) {
             if (!active) stop() else try { player?.pause() } catch (_: Exception) { }
